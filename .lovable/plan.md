@@ -1,63 +1,41 @@
 
 
-# Виправлення: Додати параметри товарів у фід Rozetka
+# Вибір категорій для включення у фід
 
-## Проблема
+## Що зробимо
 
-Розетка попереджає "Відсутні параметри" бо зараз `<param>` теги генеруються тільки для товарів з декількома варіантами. Для товарів з одним варіантом (Default Title) параметри не виводяться взагалі.
+Додамо можливість вмикати/вимикати кожну категорію в маппінгу. Вимкнені категорії не потраплятимуть у XML-фід. Це дозволить виключити "стоп-категорії" (наприклад, "чай") без видалення маппінгу.
 
-При цьому у Shopify є корисні дані в полі `options`, наприклад:
-- Тип: Широкі (200мл)
-- Матеріал свічки: Соєвий віск
-- Час горіння: 20 годин
+## Зміни
 
-## Рішення
+### 1. База даних -- нова колонка `is_active`
 
-Завжди виводити параметри з `product.options`, незалежно від назви варіанта.
+Додамо колонку `is_active` (boolean, default `true`) до таблиці `category_mapping`. Всі існуючі записи автоматично отримають значення `true`, тож нічого не зламається.
 
-Для товарів з одним варіантом (Default Title) -- брати значення напряму з `options[i].values[0]`.
-Для товарів з декількома варіантами -- як зараз, парсити значення з `variant.title`.
+### 2. UI -- тогл в таблиці категорій
 
-## Файл для зміни
+На сторінці "Mapping категорій" додамо Switch (тогл) у кожному рядку таблиці. Увімкнено = категорія потрапляє у фід, вимкнено = пропускається. Вимкнені рядки будуть візуально приглушені.
 
-**`supabase/functions/generate-feed-rozetka/index.ts`** -- блок параметрів (рядки ~129-140)
+### 3. Фіди -- фільтрація вимкнених категорій
 
-### Було:
-```typescript
-// Params from options
-if (variant.title !== "Default Title" && product.options) {
-  for (let i = 0; i < product.options.length; i++) {
-    const optName = product.options[i]?.name;
-    const optValues = variant.title?.split(" / ");
-    if (optName && optValues?.[i]) {
-      offerXml += `      <param name="${escapeXml(optName)}">${escapeXml(optValues[i])}</param>\n`;
-    }
-  }
-}
+У всіх трьох edge-функціях (Rozetka, MAUDAU, Epicentr) додамо перевірку: якщо `catMapping.is_active === false`, товар пропускається (без запису помилки валідації, бо це свідомий вибір).
+
+## Технічні деталі
+
+**Міграція SQL:**
+```sql
+ALTER TABLE category_mapping ADD COLUMN is_active boolean NOT NULL DEFAULT true;
 ```
 
-### Стане:
+**Файли для зміни:**
+- `src/pages/Categories.tsx` -- додати колонку Switch
+- `supabase/functions/generate-feed-rozetka/index.ts` -- фільтр `is_active`
+- `supabase/functions/generate-feed-maudau/index.ts` -- фільтр `is_active`
+- `supabase/functions/generate-feed-epicentr/index.ts` -- фільтр `is_active`
+
+**Логіка у фідах (однакова для всіх трьох):**
+Після знаходження `catMapping`, додати перевірку:
 ```typescript
-// Params from options (always output, not just for multi-variant products)
-if (product.options) {
-  for (let i = 0; i < product.options.length; i++) {
-    const optName = product.options[i]?.name;
-    let optValue: string | undefined;
-    if (variant.title !== "Default Title") {
-      const optValues = variant.title?.split(" / ");
-      optValue = optValues?.[i];
-    } else {
-      optValue = product.options[i]?.values?.[0];
-    }
-    if (optName && optValue) {
-      offerXml += `      <param name="${escapeXml(optName)}">${escapeXml(optValue)}</param>\n`;
-    }
-  }
-}
+if (catMapping.is_active === false) continue;
 ```
 
-## Що це дасть
-
-- Кожен offer у фіді буде мати характеристики (Тип, Матеріал, Час горіння тощо)
-- Попередження "Відсутні параметри" від Розетки зникне
-- Зміна лише в одному файлі, ~10 рядків коду
