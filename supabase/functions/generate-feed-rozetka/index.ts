@@ -126,13 +126,19 @@ serve(async (req) => {
         offerXml += `      <description><![CDATA[${product.body_html || ""}]]></description>\n`;
         offerXml += `      <description_ua><![CDATA[${product.body_html || ""}]]></description_ua>\n`;
 
-        // Params from options
-        if (variant.title !== "Default Title" && product.options) {
+        // Params from options (always output, not just for multi-variant products)
+        if (product.options) {
           for (let i = 0; i < product.options.length; i++) {
             const optName = product.options[i]?.name;
-            const optValues = variant.title?.split(" / ");
-            if (optName && optValues?.[i]) {
-              offerXml += `      <param name="${escapeXml(optName)}">${escapeXml(optValues[i])}</param>\n`;
+            let optValue: string | undefined;
+            if (variant.title !== "Default Title") {
+              const optValues = variant.title?.split(" / ");
+              optValue = optValues?.[i];
+            } else {
+              optValue = product.options[i]?.values?.[0];
+            }
+            if (optName && optValue) {
+              offerXml += `      <param name="${escapeXml(optName)}">${escapeXml(optValue)}</param>\n`;
             }
           }
         }
