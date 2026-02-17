@@ -26,6 +26,7 @@ export type Database = {
           rz_id: string | null
           shopify_collection_id: string
           shopify_collection_title: string | null
+          shopify_product_types: string[] | null
           updated_at: string
         }
         Insert: {
@@ -39,6 +40,7 @@ export type Database = {
           rz_id?: string | null
           shopify_collection_id: string
           shopify_collection_title?: string | null
+          shopify_product_types?: string[] | null
           updated_at?: string
         }
         Update: {
@@ -52,6 +54,7 @@ export type Database = {
           rz_id?: string | null
           shopify_collection_id?: string
           shopify_collection_title?: string | null
+          shopify_product_types?: string[] | null
           updated_at?: string
         }
         Relationships: [
