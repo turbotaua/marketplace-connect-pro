@@ -1,1 +1,4 @@
 project_id = "bassciyxvwkdhqubvzwt"
+
+[functions.shopify-products]
+verify_jwt = false
