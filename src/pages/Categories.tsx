@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
-import { Plus, Trash2, Save } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 
 const Categories = () => {
   const { toast } = useToast();
@@ -26,7 +26,7 @@ const Categories = () => {
   const { data: mappings } = useQuery({
     queryKey: ["category_mapping"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("category_mapping").select("*, marketplace_config(name)").order("shopify_collection_title");
+      const { data, error } = await supabase.from("category_mapping").select("*, marketplace_config(name, slug)").order("shopify_collection_title");
       if (error) throw error;
       return data;
     },
@@ -38,16 +38,31 @@ const Categories = () => {
     marketplace_id: "",
     marketplace_category_id: "",
     marketplace_category_name: "",
+    portal_id: "",
+    rz_id: "",
+    epicentr_category_code: "",
   });
+
+  const selectedMarketplaceSlug = marketplaces?.find((m) => m.id === newMapping.marketplace_id)?.slug;
 
   const addMapping = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from("category_mapping").insert(newMapping);
+      const payload = {
+        shopify_collection_id: newMapping.shopify_collection_id,
+        shopify_collection_title: newMapping.shopify_collection_title || null,
+        marketplace_id: newMapping.marketplace_id,
+        marketplace_category_id: newMapping.marketplace_category_id,
+        marketplace_category_name: newMapping.marketplace_category_name || null,
+        portal_id: newMapping.portal_id || null,
+        rz_id: newMapping.rz_id || null,
+        epicentr_category_code: newMapping.epicentr_category_code || null,
+      };
+      const { error } = await supabase.from("category_mapping").insert(payload);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["category_mapping"] });
-      setNewMapping({ shopify_collection_id: "", shopify_collection_title: "", marketplace_id: "", marketplace_category_id: "", marketplace_category_name: "" });
+      setNewMapping({ shopify_collection_id: "", shopify_collection_title: "", marketplace_id: "", marketplace_category_id: "", marketplace_category_name: "", portal_id: "", rz_id: "", epicentr_category_code: "" });
       toast({ title: "Додано" });
     },
     onError: (e) => toast({ title: "Помилка", description: e.message, variant: "destructive" }),
@@ -75,6 +90,8 @@ const Categories = () => {
     },
   });
 
+  const getMarketplaceSlug = (m: any) => (m.marketplace_config as any)?.slug;
+
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -86,7 +103,7 @@ const Categories = () => {
             <CardTitle className="text-base">Додати mapping</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 md:grid-cols-6 items-end">
+            <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4 items-end">
               <div>
                 <label className="text-xs text-muted-foreground">Shopify Collection ID</label>
                 <Input value={newMapping.shopify_collection_id} onChange={(e) => setNewMapping((p) => ({ ...p, shopify_collection_id: e.target.value }))} />
@@ -114,6 +131,27 @@ const Categories = () => {
                 <label className="text-xs text-muted-foreground">Назва категорії</label>
                 <Input value={newMapping.marketplace_category_name} onChange={(e) => setNewMapping((p) => ({ ...p, marketplace_category_name: e.target.value }))} />
               </div>
+
+              {/* Marketplace-specific fields */}
+              {selectedMarketplaceSlug === "rozetka" && (
+                <div>
+                  <label className="text-xs text-muted-foreground">rz_id (Rozetka)</label>
+                  <Input value={newMapping.rz_id} onChange={(e) => setNewMapping((p) => ({ ...p, rz_id: e.target.value }))} placeholder="ID категорії Rozetka" />
+                </div>
+              )}
+              {selectedMarketplaceSlug === "maudau" && (
+                <div>
+                  <label className="text-xs text-muted-foreground">portal_id (MAUDAU)</label>
+                  <Input value={newMapping.portal_id} onChange={(e) => setNewMapping((p) => ({ ...p, portal_id: e.target.value }))} placeholder="ID категорії MAUDAU" />
+                </div>
+              )}
+              {selectedMarketplaceSlug === "epicentr" && (
+                <div>
+                  <label className="text-xs text-muted-foreground">Category Code (Epicentr)</label>
+                  <Input value={newMapping.epicentr_category_code} onChange={(e) => setNewMapping((p) => ({ ...p, epicentr_category_code: e.target.value }))} placeholder="Код категорії" />
+                </div>
+              )}
+
               <Button onClick={() => addMapping.mutate()} disabled={!newMapping.shopify_collection_id || !newMapping.marketplace_id || !newMapping.marketplace_category_id}>
                 <Plus className="h-4 w-4 mr-1" /> Додати
               </Button>
@@ -135,43 +173,63 @@ const Categories = () => {
                     <TableHead>Маркетплейс</TableHead>
                     <TableHead>Category ID</TableHead>
                     <TableHead>Назва категорії</TableHead>
+                    <TableHead>rz_id / portal_id / code</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mappings.map((m) => (
-                    <TableRow key={m.id}>
-                      <TableCell>{m.shopify_collection_title || m.shopify_collection_id}</TableCell>
-                      <TableCell>{(m.marketplace_config as any)?.name}</TableCell>
-                      <TableCell>
-                        <Input
-                          defaultValue={m.marketplace_category_id}
-                          className="w-28"
-                          onBlur={(e) => {
-                            if (e.target.value !== m.marketplace_category_id) {
-                              updateMapping.mutate({ id: m.id, field: "marketplace_category_id", value: e.target.value });
-                            }
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          defaultValue={m.marketplace_category_name || ""}
-                          className="w-40"
-                          onBlur={(e) => {
-                            if (e.target.value !== (m.marketplace_category_name || "")) {
-                              updateMapping.mutate({ id: m.id, field: "marketplace_category_name", value: e.target.value });
-                            }
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Button variant="ghost" size="icon" onClick={() => deleteMapping.mutate(m.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {mappings.map((m: any) => {
+                    const slug = getMarketplaceSlug(m);
+                    const extraField = slug === "rozetka" ? "rz_id" : slug === "maudau" ? "portal_id" : slug === "epicentr" ? "epicentr_category_code" : null;
+                    const extraValue = extraField ? (m as any)[extraField] || "" : "";
+                    return (
+                      <TableRow key={m.id}>
+                        <TableCell>{m.shopify_collection_title || m.shopify_collection_id}</TableCell>
+                        <TableCell>{(m.marketplace_config as any)?.name}</TableCell>
+                        <TableCell>
+                          <Input
+                            defaultValue={m.marketplace_category_id}
+                            className="w-28"
+                            onBlur={(e) => {
+                              if (e.target.value !== m.marketplace_category_id) {
+                                updateMapping.mutate({ id: m.id, field: "marketplace_category_id", value: e.target.value });
+                              }
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            defaultValue={m.marketplace_category_name || ""}
+                            className="w-40"
+                            onBlur={(e) => {
+                              if (e.target.value !== (m.marketplace_category_name || "")) {
+                                updateMapping.mutate({ id: m.id, field: "marketplace_category_name", value: e.target.value });
+                              }
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          {extraField && (
+                            <Input
+                              defaultValue={extraValue}
+                              className="w-32"
+                              placeholder={extraField}
+                              onBlur={(e) => {
+                                if (e.target.value !== extraValue) {
+                                  updateMapping.mutate({ id: m.id, field: extraField, value: e.target.value });
+                                }
+                              }}
+                            />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="icon" onClick={() => deleteMapping.mutate(m.id)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             ) : (
