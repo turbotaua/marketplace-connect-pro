@@ -109,9 +109,8 @@ serve(async (req) => {
         let offerXml = `    <offer id="${escapeXml(offerId)}" available="${available}">\n`;
         offerXml += `      <name_ua>${escapeXml(nameUa)}</name_ua>\n`;
         offerXml += `      <name_ru>${escapeXml(nameRu)}</name_ru>\n`;
-        // MAUDAU: NO CDATA for descriptions, HTML allowed directly
-        offerXml += `      <description_ua>${descUa}</description_ua>\n`;
-        offerXml += `      <description_ru>${descRu}</description_ru>\n`;
+        offerXml += `      <description_ua><![CDATA[${descUa}]]></description_ua>\n`;
+        offerXml += `      <description_ru><![CDATA[${descRu}]]></description_ru>\n`;
         offerXml += `      <price>${finalPrice}</price>\n`;
         if (compareAtPrice && compareAtPrice > finalPrice) {
           offerXml += `      <old_price>${compareAtPrice}</old_price>\n`;
