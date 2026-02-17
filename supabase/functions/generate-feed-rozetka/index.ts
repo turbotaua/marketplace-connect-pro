@@ -81,6 +81,7 @@ serve(async (req) => {
         validationErrors.push({ product_title: product.title, product_sku: null, error_type: "no_category", error_message: "Немає mapping категорії", marketplace_slug: slug });
         continue;
       }
+      if (catMapping.is_active === false) continue;
 
       // Add to categories map
       if (!categoriesMap.has(catMapping.marketplace_category_id)) {
