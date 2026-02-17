@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { Plus, Trash2, X } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 const Categories = () => {
   const { toast } = useToast();
@@ -179,13 +180,14 @@ const Categories = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Shopify Collection</TableHead>
-                    <TableHead>Маркетплейс</TableHead>
-                    <TableHead>Category ID</TableHead>
-                    <TableHead>Назва категорії</TableHead>
-                     <TableHead>Shopify Product Types</TableHead>
-                     <TableHead>rz_id / portal_id / code</TableHead>
-                     <TableHead></TableHead>
+                     <TableHead className="w-16">Активна</TableHead>
+                     <TableHead>Shopify Collection</TableHead>
+                     <TableHead>Маркетплейс</TableHead>
+                     <TableHead>Category ID</TableHead>
+                     <TableHead>Назва категорії</TableHead>
+                      <TableHead>Shopify Product Types</TableHead>
+                      <TableHead>rz_id / portal_id / code</TableHead>
+                      <TableHead></TableHead>
                    </TableRow>
                  </TableHeader>
                  <TableBody>
@@ -193,9 +195,16 @@ const Categories = () => {
                      const slug = getMarketplaceSlug(m);
                      const extraField = slug === "rozetka" ? "rz_id" : slug === "maudau" ? "portal_id" : slug === "epicentr" ? "epicentr_category_code" : null;
                      const extraValue = extraField ? (m as any)[extraField] || "" : "";
-                     const productTypes: string[] = (m as any).shopify_product_types || [];
+                      const productTypes: string[] = (m as any).shopify_product_types || [];
+                      const isActive = (m as any).is_active !== false;
                     return (
-                      <TableRow key={m.id}>
+                      <TableRow key={m.id} className={!isActive ? "opacity-50" : ""}>
+                        <TableCell>
+                          <Switch
+                            checked={isActive}
+                            onCheckedChange={(checked) => updateMapping.mutate({ id: m.id, field: "is_active", value: checked })}
+                          />
+                        </TableCell>
                         <TableCell>{m.shopify_collection_title || m.shopify_collection_id}</TableCell>
                         <TableCell>{(m.marketplace_config as any)?.name}</TableCell>
                         <TableCell>

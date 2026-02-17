@@ -72,6 +72,7 @@ serve(async (req) => {
         validationErrors.push({ product_title: product.title, product_sku: null, error_type: "no_category", error_message: "Немає mapping категорії", marketplace_slug: slug });
         continue;
       }
+      if (catMapping.is_active === false) continue;
 
       const catMultiplier = priceMultipliers?.find((pm: any) => pm.shopify_collection_id === catMapping.shopify_collection_id);
       const multiplier = catMultiplier ? catMultiplier.multiplier : mpConfig.global_multiplier;

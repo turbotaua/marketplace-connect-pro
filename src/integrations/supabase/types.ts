@@ -19,6 +19,7 @@ export type Database = {
           created_at: string
           epicentr_category_code: string | null
           id: string
+          is_active: boolean
           marketplace_category_id: string
           marketplace_category_name: string | null
           marketplace_id: string
@@ -33,6 +34,7 @@ export type Database = {
           created_at?: string
           epicentr_category_code?: string | null
           id?: string
+          is_active?: boolean
           marketplace_category_id: string
           marketplace_category_name?: string | null
           marketplace_id: string
@@ -47,6 +49,7 @@ export type Database = {
           created_at?: string
           epicentr_category_code?: string | null
           id?: string
+          is_active?: boolean
           marketplace_category_id?: string
           marketplace_category_name?: string | null
           marketplace_id?: string
