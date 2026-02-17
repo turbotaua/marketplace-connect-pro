@@ -2,3 +2,12 @@ project_id = "bassciyxvwkdhqubvzwt"
 
 [functions.shopify-products]
 verify_jwt = false
+
+[functions.generate-feed-rozetka]
+verify_jwt = false
+
+[functions.generate-feed-maudau]
+verify_jwt = false
+
+[functions.generate-feed-epicentr]
+verify_jwt = false

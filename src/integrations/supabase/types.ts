@@ -17,30 +17,39 @@ export type Database = {
       category_mapping: {
         Row: {
           created_at: string
+          epicentr_category_code: string | null
           id: string
           marketplace_category_id: string
           marketplace_category_name: string | null
           marketplace_id: string
+          portal_id: string | null
+          rz_id: string | null
           shopify_collection_id: string
           shopify_collection_title: string | null
           updated_at: string
         }
         Insert: {
           created_at?: string
+          epicentr_category_code?: string | null
           id?: string
           marketplace_category_id: string
           marketplace_category_name?: string | null
           marketplace_id: string
+          portal_id?: string | null
+          rz_id?: string | null
           shopify_collection_id: string
           shopify_collection_title?: string | null
           updated_at?: string
         }
         Update: {
           created_at?: string
+          epicentr_category_code?: string | null
           id?: string
           marketplace_category_id?: string
           marketplace_category_name?: string | null
           marketplace_id?: string
+          portal_id?: string | null
+          rz_id?: string | null
           shopify_collection_id?: string
           shopify_collection_title?: string | null
           updated_at?: string
