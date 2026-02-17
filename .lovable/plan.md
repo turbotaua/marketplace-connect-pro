@@ -1,36 +1,63 @@
 
 
-# Fix: MAUDAU Feed XML Parsing Error (and verify Rozetka)
+# Виправлення: Додати параметри товарів у фід Rozetka
 
-## Problem
+## Проблема
 
-The MAUDAU feed is broken because Shopify `body_html` (containing raw HTML like `<p>`, `<meta>`, `<style>` tags) is inserted directly into XML without protection, causing XML parsing errors. The browser shows a blank page.
+Розетка попереджає "Відсутні параметри" бо зараз `<param>` теги генеруються тільки для товарів з декількома варіантами. Для товарів з одним варіантом (Default Title) параметри не виводяться взагалі.
 
-The Rozetka feed was tested and returns valid XML with 197 offers -- it already uses CDATA for descriptions. If you're seeing issues with Rozetka too, it might be a different problem (please share a screenshot).
+При цьому у Shopify є корисні дані в полі `options`, наприклад:
+- Тип: Широкі (200мл)
+- Матеріал свічки: Соєвий віск
+- Час горіння: 20 годин
 
-## Fix
+## Рішення
 
-### MAUDAU: Wrap descriptions in CDATA
+Завжди виводити параметри з `product.options`, незалежно від назви варіанта.
 
-**File:** `supabase/functions/generate-feed-maudau/index.ts`
+Для товарів з одним варіантом (Default Title) -- брати значення напряму з `options[i].values[0]`.
+Для товарів з декількома варіантами -- як зараз, парсити значення з `variant.title`.
 
-Change lines 112-114 from:
+## Файл для зміни
+
+**`supabase/functions/generate-feed-rozetka/index.ts`** -- блок параметрів (рядки ~129-140)
+
+### Було:
 ```typescript
-// MAUDAU: NO CDATA for descriptions, HTML allowed directly
-offerXml += `      <description_ua>${descUa}</description_ua>\n`;
-offerXml += `      <description_ru>${descRu}</description_ru>\n`;
+// Params from options
+if (variant.title !== "Default Title" && product.options) {
+  for (let i = 0; i < product.options.length; i++) {
+    const optName = product.options[i]?.name;
+    const optValues = variant.title?.split(" / ");
+    if (optName && optValues?.[i]) {
+      offerXml += `      <param name="${escapeXml(optName)}">${escapeXml(optValues[i])}</param>\n`;
+    }
+  }
+}
 ```
 
-To:
+### Стане:
 ```typescript
-offerXml += `      <description_ua><![CDATA[${descUa}]]></description_ua>\n`;
-offerXml += `      <description_ru><![CDATA[${descRu}]]></description_ru>\n`;
+// Params from options (always output, not just for multi-variant products)
+if (product.options) {
+  for (let i = 0; i < product.options.length; i++) {
+    const optName = product.options[i]?.name;
+    let optValue: string | undefined;
+    if (variant.title !== "Default Title") {
+      const optValues = variant.title?.split(" / ");
+      optValue = optValues?.[i];
+    } else {
+      optValue = product.options[i]?.values?.[0];
+    }
+    if (optName && optValue) {
+      offerXml += `      <param name="${escapeXml(optName)}">${escapeXml(optValue)}</param>\n`;
+    }
+  }
+}
 ```
 
-This is exactly 2 lines of change, then redeploy the function.
+## Що це дасть
 
-## Technical Note
-
-CDATA (`<![CDATA[...]]>`) tells the XML parser to treat the content as plain text. This prevents HTML tags like `<p>`, `<meta charset="UTF-8">`, `<style>` from being interpreted as XML elements, which was causing the parsing failure.
-
-Rozetka and Epicentr feeds already use CDATA for their descriptions and are working correctly.
+- Кожен offer у фіді буде мати характеристики (Тип, Матеріал, Час горіння тощо)
+- Попередження "Відсутні параметри" від Розетки зникне
+- Зміна лише в одному файлі, ~10 рядків коду
