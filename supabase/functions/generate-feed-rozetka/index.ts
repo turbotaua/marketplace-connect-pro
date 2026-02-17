@@ -71,7 +71,12 @@ serve(async (req) => {
       }
 
       // Find category mapping by product_type or collection
-      const catMapping = catMappings?.find((cm: any) => cm.shopify_collection_title === product.product_type || cm.shopify_collection_id === product.product_type);
+      const catMapping = catMappings?.find((cm: any) => {
+        if (cm.shopify_product_types?.length > 0 && product.product_type) {
+          return cm.shopify_product_types.includes(product.product_type);
+        }
+        return cm.shopify_collection_title === product.product_type;
+      });
       if (!catMapping) {
         validationErrors.push({ product_title: product.title, product_sku: null, error_type: "no_category", error_message: "Немає mapping категорії", marketplace_slug: slug });
         continue;

@@ -6,9 +6,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 
 const Categories = () => {
   const { toast } = useToast();
@@ -80,7 +81,7 @@ const Categories = () => {
   });
 
   const updateMapping = useMutation({
-    mutationFn: async ({ id, field, value }: { id: string; field: string; value: string }) => {
+    mutationFn: async ({ id, field, value }: { id: string; field: string; value: any }) => {
       const { error } = await supabase.from("category_mapping").update({ [field]: value }).eq("id", id);
       if (error) throw error;
     },
@@ -89,6 +90,15 @@ const Categories = () => {
       toast({ title: "Збережено" });
     },
   });
+
+  const addProductType = (mappingId: string, currentTypes: string[], newType: string) => {
+    if (!newType.trim() || currentTypes.includes(newType.trim())) return;
+    updateMapping.mutate({ id: mappingId, field: "shopify_product_types", value: [...currentTypes, newType.trim()] });
+  };
+
+  const removeProductType = (mappingId: string, currentTypes: string[], typeToRemove: string) => {
+    updateMapping.mutate({ id: mappingId, field: "shopify_product_types", value: currentTypes.filter(t => t !== typeToRemove) });
+  };
 
   const getMarketplaceSlug = (m: any) => (m.marketplace_config as any)?.slug;
 
@@ -173,15 +183,17 @@ const Categories = () => {
                     <TableHead>Маркетплейс</TableHead>
                     <TableHead>Category ID</TableHead>
                     <TableHead>Назва категорії</TableHead>
-                    <TableHead>rz_id / portal_id / code</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mappings.map((m: any) => {
-                    const slug = getMarketplaceSlug(m);
-                    const extraField = slug === "rozetka" ? "rz_id" : slug === "maudau" ? "portal_id" : slug === "epicentr" ? "epicentr_category_code" : null;
-                    const extraValue = extraField ? (m as any)[extraField] || "" : "";
+                     <TableHead>Shopify Product Types</TableHead>
+                     <TableHead>rz_id / portal_id / code</TableHead>
+                     <TableHead></TableHead>
+                   </TableRow>
+                 </TableHeader>
+                 <TableBody>
+                   {mappings.map((m: any) => {
+                     const slug = getMarketplaceSlug(m);
+                     const extraField = slug === "rozetka" ? "rz_id" : slug === "maudau" ? "portal_id" : slug === "epicentr" ? "epicentr_category_code" : null;
+                     const extraValue = extraField ? (m as any)[extraField] || "" : "";
+                     const productTypes: string[] = (m as any).shopify_product_types || [];
                     return (
                       <TableRow key={m.id}>
                         <TableCell>{m.shopify_collection_title || m.shopify_collection_id}</TableCell>
@@ -207,6 +219,26 @@ const Categories = () => {
                               }
                             }}
                           />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1 items-center min-w-[200px]">
+                            {productTypes.map((pt) => (
+                              <Badge key={pt} variant="secondary" className="gap-1">
+                                {pt}
+                                <X className="h-3 w-3 cursor-pointer" onClick={() => removeProductType(m.id, productTypes, pt)} />
+                              </Badge>
+                            ))}
+                            <Input
+                              className="w-32 h-7 text-xs"
+                              placeholder="+ тип"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  addProductType(m.id, productTypes, e.currentTarget.value);
+                                  e.currentTarget.value = "";
+                                }
+                              }}
+                            />
+                          </div>
                         </TableCell>
                         <TableCell>
                           {extraField && (
