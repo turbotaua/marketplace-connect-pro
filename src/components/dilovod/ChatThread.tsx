@@ -2,21 +2,94 @@ import { useEffect, useRef } from "react";
 import type { ChatMessage } from "@/pages/Dilovod";
 import { DraftCard } from "./DraftCard";
 import { ConfirmationMessage } from "./ConfirmationMessage";
+import { DisambiguationCard } from "./DisambiguationCard";
 import { cn } from "@/lib/utils";
-import { Sparkles, User, Loader2 } from "lucide-react";
+import { Sparkles, User, Loader2, Search } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import type { Disambiguation } from "@/lib/draftResolver";
 
 interface ChatThreadProps {
   messages: ChatMessage[];
   isStreaming?: boolean;
+  onDisambiguationSelect?: (
+    msgId: string,
+    field: "counterparty" | "item",
+    index: number | undefined,
+    selectedId: string,
+    selectedName: string
+  ) => void;
 }
 
-export const ChatThread = ({ messages, isStreaming }: ChatThreadProps) => {
+export const ChatThread = ({ messages, isStreaming, onDisambiguationSelect }: ChatThreadProps) => {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const renderMessageContent = (msg: ChatMessage) => {
+    // Resolving state — searching catalog
+    if (msg.metadata?.type === "resolving") {
+      return (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Search className="h-4 w-4 animate-pulse" />
+          <span>{msg.metadata.resolvingStatus || "Пошук у каталозі..."}</span>
+        </div>
+      );
+    }
+
+    // Draft fully resolved — show DraftCard
+    if (msg.metadata?.type === "draft" && msg.metadata.draft) {
+      return <DraftCard draft={msg.metadata.draft} />;
+    }
+
+    // Disambiguation needed — show draft + disambiguation cards
+    if (msg.metadata?.type === "disambiguation" && msg.metadata.draft) {
+      const disambiguations: Disambiguation[] = msg.metadata.disambiguations || [];
+      return (
+        <div className="space-y-3">
+          <DraftCard draft={msg.metadata.draft} />
+          {disambiguations.map((d, i) => (
+            <DisambiguationCard
+              key={`${d.field}-${d.index ?? "cp"}-${i}`}
+              title={d.field === "counterparty" ? "Контрагент" : `Товар: рядок ${(d.index ?? 0) + 1}`}
+              extractedName={d.extractedName}
+              candidates={d.candidates}
+              onSelect={(id) => {
+                const selected = d.candidates.find((c) => c.id === id);
+                if (selected && onDisambiguationSelect) {
+                  onDisambiguationSelect(msg.id, d.field, d.index, selected.id, selected.name);
+                }
+              }}
+              onCreateNew={() => {
+                if (onDisambiguationSelect) {
+                  onDisambiguationSelect(msg.id, d.field, d.index, "__new__", d.extractedName);
+                }
+              }}
+            />
+          ))}
+        </div>
+      );
+    }
+
+    // Confirmation
+    if (msg.metadata?.type === "confirmation" && msg.metadata.dilovodIds) {
+      return <ConfirmationMessage ids={msg.metadata.dilovodIds} actionType={msg.metadata.actionType} />;
+    }
+
+    // Plain text / markdown — strip out raw JSON draft blocks for cleaner display
+    let displayContent = msg.content;
+    if (msg.metadata?.draft) {
+      // Remove the JSON block from display since we show DraftCard
+      displayContent = displayContent.replace(/```(?:json)?\s*\n?\{[\s\S]*?"type"\s*:\s*"draft"[\s\S]*?\}\s*```/g, "").trim();
+    }
+
+    return (
+      <div className="prose prose-sm dark:prose-invert max-w-none [&>p]:m-0">
+        <ReactMarkdown>{displayContent}</ReactMarkdown>
+      </div>
+    );
+  };
 
   return (
     <div className="h-full overflow-y-auto py-6 space-y-6 px-4">
@@ -49,15 +122,7 @@ export const ChatThread = ({ messages, isStreaming }: ChatThreadProps) => {
                 : "bg-card border border-border text-foreground"
             )}
           >
-            {msg.metadata?.type === "draft" && msg.metadata.draft ? (
-              <DraftCard draft={msg.metadata.draft} />
-            ) : msg.metadata?.type === "confirmation" && msg.metadata.dilovodIds ? (
-              <ConfirmationMessage ids={msg.metadata.dilovodIds} actionType={msg.metadata.actionType} />
-            ) : (
-              <div className="prose prose-sm dark:prose-invert max-w-none [&>p]:m-0">
-                <ReactMarkdown>{msg.content}</ReactMarkdown>
-              </div>
-            )}
+            {renderMessageContent(msg)}
           </div>
         </div>
       ))}

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 interface DraftItem {
   extracted_name: string;
   dilovod_id?: string | null;
+  dilovod_name?: string;
   qty: number;
   price: number;
   total: number;
@@ -17,7 +18,7 @@ interface DraftItem {
 
 interface DraftData {
   actionType: string;
-  counterparty: { extracted_name: string; dilovod_id?: string | null; flagged?: boolean };
+  counterparty: { extracted_name: string; dilovod_id?: string | null; dilovod_name?: string; flagged?: boolean };
   date: string;
   items: DraftItem[];
   total_sum: number;
@@ -54,6 +55,7 @@ const chainLabels: Record<string, string[]> = {
 
 export const DraftCard = ({ draft, onApprove, onReject, onEdit }: DraftCardProps) => {
   const hasFlags = draft.flags && draft.flags.length > 0;
+  const hasUnresolved = draft.counterparty.flagged || draft.items.some((i) => i.flagged);
 
   return (
     <Card className="w-full max-w-lg border-border">
@@ -62,7 +64,7 @@ export const DraftCard = ({ draft, onApprove, onReject, onEdit }: DraftCardProps
           <CardTitle className="text-sm font-semibold">
             📄 DRAFT — {actionLabels[draft.actionType] || draft.actionType}
           </CardTitle>
-          {hasFlags && (
+          {(hasFlags || hasUnresolved) && (
             <Badge variant="outline" className="text-yellow-600 border-yellow-500">
               <AlertTriangle className="h-3 w-3 mr-1" />
               Потребує уваги
@@ -74,11 +76,18 @@ export const DraftCard = ({ draft, onApprove, onReject, onEdit }: DraftCardProps
         {/* Counterparty */}
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground">Контрагент:</span>
-          <span className="font-medium">{draft.counterparty.extracted_name}</span>
+          <span className="font-medium">
+            {draft.counterparty.dilovod_name || draft.counterparty.extracted_name}
+          </span>
           {draft.counterparty.dilovod_id ? (
             <Check className="h-3.5 w-3.5 text-green-600" />
           ) : (
             <AlertTriangle className="h-3.5 w-3.5 text-yellow-600" />
+          )}
+          {draft.counterparty.dilovod_name && draft.counterparty.dilovod_name !== draft.counterparty.extracted_name && (
+            <span className="text-[10px] text-muted-foreground">
+              (було: {draft.counterparty.extracted_name})
+            </span>
           )}
         </div>
 
@@ -102,8 +111,19 @@ export const DraftCard = ({ draft, onApprove, onReject, onEdit }: DraftCardProps
             {draft.items.map((item, i) => (
               <TableRow key={i} className={cn(item.flagged && "bg-yellow-50 dark:bg-yellow-950/20")}>
                 <TableCell className="text-xs py-1.5">
-                  {item.extracted_name}
-                  {item.flagged && <AlertTriangle className="h-3 w-3 text-yellow-600 inline ml-1" />}
+                  <div className="flex items-center gap-1">
+                    {item.dilovod_name || item.extracted_name}
+                    {item.dilovod_id ? (
+                      <Check className="h-3 w-3 text-green-600 flex-shrink-0" />
+                    ) : item.flagged ? (
+                      <AlertTriangle className="h-3 w-3 text-yellow-600 flex-shrink-0" />
+                    ) : null}
+                  </div>
+                  {item.dilovod_name && item.dilovod_name !== item.extracted_name && (
+                    <span className="text-[10px] text-muted-foreground block">
+                      (було: {item.extracted_name})
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell className="text-xs text-right py-1.5">{item.qty}</TableCell>
                 <TableCell className="text-xs text-right py-1.5">{item.price.toFixed(2)}₴</TableCell>
