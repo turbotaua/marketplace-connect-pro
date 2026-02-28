@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import AdminLayout from "@/components/AdminLayout";
 import { ChatThread } from "@/components/dilovod/ChatThread";
 import { ActionTags } from "@/components/dilovod/ActionTags";
@@ -28,7 +28,8 @@ export type ActionType =
   | "sales.end_consumer"
   | "sales.return"
   | "purchase.goods"
-  | "purchase.services";
+  | "purchase.services"
+  | "production.order";
 
 const Dilovod = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -164,6 +165,7 @@ function getActionLabel(action: ActionType): string {
     "sales.return": "Повернення",
     "purchase.goods": "Надходження товарів",
     "purchase.services": "Надходження послуг",
+    "production.order": "Замовлення на виробництво",
   };
   return labels[action];
 }
