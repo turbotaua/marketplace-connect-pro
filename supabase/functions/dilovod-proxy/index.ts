@@ -210,6 +210,26 @@ serve(async (req) => {
         break;
       }
 
+      // Get historical suppliers for an item (from purchase receipts)
+      case "getItemSuppliers": {
+        const itemId = params.itemId;
+        result = await callDilovod(apiKey, "request", {
+          from: "documents.buy",
+          fields: {
+            id: "doc_id",
+            person: "person",
+            "person.name": "person_name",
+            "person.code": "person_code",
+            date: "doc_date",
+          },
+          filters: [
+            { alias: "tpGoods.good", operator: "=", value: itemId },
+          ],
+          limit: params.limit || 20,
+        });
+        break;
+      }
+
       // List accounts (cached)
       case "listAccounts": {
         const cached = await getCached(supabase, "accounts");

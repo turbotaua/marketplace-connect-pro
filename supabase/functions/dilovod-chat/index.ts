@@ -81,6 +81,20 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_item_suppliers",
+      description: "Знаходить контрагентів (постачальників), з якими цей товар фігурував у попередніх надходженнях. Використовуй коли контрагент не вказаний користувачем — щоб визначити найімовірнішого постачальника.",
+      parameters: {
+        type: "object",
+        properties: {
+          itemId: { type: "string", description: "ID товару в Діловод (отриманий з search_item)" },
+        },
+        required: ["itemId"],
+      },
+    },
+  },
 ];
 
 // Map tool names to dilovod-proxy action names
@@ -90,6 +104,7 @@ const TOOL_TO_ACTION: Record<string, string> = {
   search_shipments: "searchShipments",
   get_object: "getObject",
   get_product_spec: "getProductSpec",
+  get_item_suppliers: "getItemSuppliers",
 };
 
 // ─── System prompt ───────────────────────────────────────────────────────────
@@ -142,6 +157,14 @@ const SYSTEM_PROMPT = `Ти — Dilovod AI-асистент, який допом
 6. Якщо tool повертає { "error": "timeout" } — постав dilovod_id: null, candidates: [] і продовжуй. Не зупиняйся.
 7. Шукай кожен товар окремо — API не підтримує batch-пошук.
 8. Після всіх пошуків — поверни draft JSON в форматі нижче. НІКОЛИ не вигадуй dilovod_id — тільки з результатів пошуку.
+9. Якщо контрагент НЕ вказаний в повідомленні користувача — НЕ пиши "Не вказано".
+   Замість цього:
+   a) Спочатку знайди товари через search_item
+   b) Для першого знайденого товару виклич get_item_suppliers(itemId)
+   c) Якщо є один постачальник — використай його і повідом користувача що визначив автоматично
+   d) Якщо є кілька — постав dilovod_id: null і заповни candidates[] постачальниками
+   e) Якщо нема — тоді запитай користувача
+10. НІКОЛИ не передавай "Не вказано", "невідомо", "не зазначено" в search_counterparty. Це не назва — це означає що контрагент невідомий. Використай правило 9.
 
 ## ВАЖЛИВО: Дата документа
 - Завжди використовуй СЬОГОДНІШНЮ дату, яка передається в контексті нижче.
