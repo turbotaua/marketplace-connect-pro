@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Send, Sparkles } from "lucide-react";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { streamChat } from "@/lib/streamChat";
+import { parseDraftFromText, resolveDraft, type DraftData, type Disambiguation } from "@/lib/draftResolver";
 import { toast } from "sonner";
 
 export interface ChatMessage {
@@ -15,13 +16,15 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   metadata?: {
-    type?: "text" | "draft" | "confirmation" | "disambiguation" | "error";
+    type?: "text" | "draft" | "confirmation" | "disambiguation" | "resolving" | "error";
     draft?: any;
     fileUrl?: string;
     fileName?: string;
     actionType?: string;
     dilovodIds?: Record<string, string>;
     candidates?: any[];
+    disambiguations?: Disambiguation[];
+    resolvingStatus?: string;
   };
   created_at: string;
 }
@@ -76,6 +79,45 @@ const Dilovod = () => {
     return "Доброго вечора";
   };
 
+  const handleDisambiguationSelect = useCallback(
+    (disambiguationMsgId: string, field: "counterparty" | "item", index: number | undefined, selectedId: string, selectedName: string) => {
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.id !== disambiguationMsgId) return msg;
+          if (!msg.metadata?.draft) return msg;
+
+          const draft = JSON.parse(JSON.stringify(msg.metadata.draft)) as DraftData;
+          const disambiguations = (msg.metadata.disambiguations || []).filter((d) => {
+            if (d.field !== field) return true;
+            if (d.field === "item" && d.index !== index) return true;
+            return false;
+          });
+
+          if (field === "counterparty") {
+            draft.counterparty.dilovod_id = selectedId;
+            draft.counterparty.dilovod_name = selectedName;
+            draft.counterparty.flagged = false;
+          } else if (field === "item" && index !== undefined) {
+            draft.items[index].dilovod_id = selectedId;
+            draft.items[index].dilovod_name = selectedName;
+            draft.items[index].flagged = false;
+          }
+
+          return {
+            ...msg,
+            metadata: {
+              ...msg.metadata,
+              type: disambiguations.length === 0 ? "draft" as const : "disambiguation" as const,
+              draft,
+              disambiguations,
+            },
+          };
+        })
+      );
+    },
+    [setMessages]
+  );
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text && !uploadedFile) return;
@@ -88,7 +130,6 @@ const Dilovod = () => {
 
     const userContent = text || (file ? `📎 ${file.name}` : "");
 
-    // Save user message
     await saveMessage({
       role: "user",
       content: userContent,
@@ -99,7 +140,6 @@ const Dilovod = () => {
         : undefined,
     });
 
-    // Build history for AI
     const historyForAI = [
       ...messages
         .filter((m) => m.role === "user" || m.role === "assistant")
@@ -135,17 +175,66 @@ const Dilovod = () => {
           });
         },
         onDone: async () => {
-          // Replace streaming message with persisted one
-          if (assistantSoFar) {
-            // Remove the streaming placeholder
-            setMessages((prev) =>
-              prev.filter((m) => !m.id.startsWith("streaming-"))
-            );
+          // Remove streaming placeholder
+          setMessages((prev) =>
+            prev.filter((m) => !m.id.startsWith("streaming-"))
+          );
+
+          if (!assistantSoFar) {
+            setIsProcessing(false);
+            return;
+          }
+
+          // Check if AI response contains a draft JSON
+          const parsedDraft = parseDraftFromText(assistantSoFar);
+
+          if (parsedDraft) {
+            // Show resolving indicator
+            const resolvingId = `resolving-${Date.now()}`;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: resolvingId,
+                role: "assistant" as const,
+                content: assistantSoFar,
+                metadata: { type: "resolving", resolvingStatus: "🔍 Пошук у каталозі Діловод..." },
+                created_at: new Date().toISOString(),
+              },
+            ]);
+
+            try {
+              const { draft, disambiguations, isFullyResolved } = await resolveDraft(parsedDraft);
+
+              // Remove resolving placeholder
+              setMessages((prev) => prev.filter((m) => m.id !== resolvingId));
+
+              // Save the message with resolved draft
+              await saveMessage({
+                role: "assistant",
+                content: assistantSoFar,
+                metadata: {
+                  type: isFullyResolved ? "draft" : "disambiguation",
+                  draft,
+                  disambiguations: isFullyResolved ? undefined : disambiguations,
+                },
+              });
+            } catch (err) {
+              console.error("Draft resolution failed:", err);
+              // Remove resolving placeholder, save as regular text
+              setMessages((prev) => prev.filter((m) => m.id !== resolvingId));
+              await saveMessage({
+                role: "assistant",
+                content: assistantSoFar,
+              });
+            }
+          } else {
+            // No draft — save as regular text
             await saveMessage({
               role: "assistant",
               content: assistantSoFar,
             });
           }
+
           setIsProcessing(false);
         },
         onError: (error) => {
@@ -255,7 +344,11 @@ const Dilovod = () => {
             </div>
 
             <div className="flex-1 overflow-hidden">
-              <ChatThread messages={messages} isStreaming={isProcessing} />
+              <ChatThread
+                messages={messages}
+                isStreaming={isProcessing}
+                onDisambiguationSelect={handleDisambiguationSelect}
+              />
             </div>
 
             <div className="border-t border-border p-4">
