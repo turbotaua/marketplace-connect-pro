@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Send, Sparkles } from "lucide-react";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { streamChat } from "@/lib/streamChat";
-import { parseDraftFromText, resolveDraft, retryResolveCounterparty, type DraftData, type Disambiguation } from "@/lib/draftResolver";
+import { parseDraftFromText, extractDisambiguationsFromDraft, resolveDraft, retryResolveCounterparty, type DraftData, type Disambiguation } from "@/lib/draftResolver";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -332,61 +332,100 @@ const Dilovod = () => {
           // Refresh sessions list (to update sidebar title)
           refreshSessions();
 
-          // Check for draft and resolve in background (non-blocking)
+          // Check for draft in AI response
           const parsedDraft = parseDraftFromText(assistantSoFar);
           if (parsedDraft) {
-            // Show resolving indicator by updating the saved message metadata
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === savedMsg.id
-                  ? { ...m, metadata: { type: "resolving" as const, resolvingStatus: "🔍 Пошук у каталозі Діловод..." } }
-                  : m
-              )
-            );
+            // First check if AI already pre-resolved everything (agentic path)
+            const hasAllResolved = 
+              !!parsedDraft.counterparty.dilovod_id &&
+              parsedDraft.items.every((i) => !!i.dilovod_id);
 
-            // resolveDraft never throws — always returns partial results
-            let { draft, disambiguations, isFullyResolved } = await resolveDraft(parsedDraft);
-
-            // Auto-retry once if counterparty timed out (empty candidates)
-            const cpTimedOut = disambiguations.find((d) => d.field === "counterparty" && d.timedOut);
-            if (cpTimedOut) {
-              console.log("[Dilovod] Counterparty timed out, auto-retrying...");
+            if (hasAllResolved) {
+              // AI pre-resolved everything — skip client-side resolution entirely
+              parsedDraft.counterparty.flagged = false;
+              parsedDraft.items.forEach((i) => { i.flagged = false; });
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === savedMsg.id
-                    ? { ...m, metadata: { type: "resolving" as const, resolvingStatus: "🔄 Повторний пошук контрагента..." } }
+                    ? { ...m, metadata: { type: "draft" as const, draft: parsedDraft } }
                     : m
                 )
               );
-              const retry = await retryResolveCounterparty(draft.counterparty.extracted_name);
-              if (retry.dilovod_id) {
-                draft.counterparty.dilovod_id = retry.dilovod_id;
-                draft.counterparty.dilovod_name = retry.dilovod_name;
-                draft.counterparty.flagged = false;
-                disambiguations = disambiguations.filter((d) => d.field !== "counterparty");
-                isFullyResolved = disambiguations.length === 0;
-              } else if (retry.disambiguation) {
-                disambiguations = disambiguations.map((d) =>
-                  d.field === "counterparty" ? retry.disambiguation! : d
+            } else {
+              // Check if AI provided candidates for disambiguation
+              const aiDisambiguations = extractDisambiguationsFromDraft(parsedDraft);
+              const hasAiCandidates = aiDisambiguations.some((d) => d.candidates.length > 0);
+
+              if (hasAiCandidates) {
+                // AI provided candidates — show disambiguation directly, no client search needed
+                const isFullyResolved = aiDisambiguations.length === 0;
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === savedMsg.id
+                      ? {
+                          ...m,
+                          metadata: {
+                            type: isFullyResolved ? "draft" as const : "disambiguation" as const,
+                            draft: parsedDraft,
+                            disambiguations: isFullyResolved ? undefined : aiDisambiguations,
+                          },
+                        }
+                      : m
+                  )
+                );
+              } else {
+                // Fallback: AI didn't resolve or provide candidates — run client-side safety net
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === savedMsg.id
+                      ? { ...m, metadata: { type: "resolving" as const, resolvingStatus: "🔍 Пошук у каталозі Діловод..." } }
+                      : m
+                  )
+                );
+
+                let { draft, disambiguations, isFullyResolved } = await resolveDraft(parsedDraft);
+
+                // Auto-retry once if counterparty timed out
+                const cpTimedOut = disambiguations.find((d) => d.field === "counterparty" && d.timedOut);
+                if (cpTimedOut) {
+                  console.log("[Dilovod] Counterparty timed out, auto-retrying...");
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === savedMsg.id
+                        ? { ...m, metadata: { type: "resolving" as const, resolvingStatus: "🔄 Повторний пошук контрагента..." } }
+                        : m
+                    )
+                  );
+                  const retry = await retryResolveCounterparty(draft.counterparty.extracted_name);
+                  if (retry.dilovod_id) {
+                    draft.counterparty.dilovod_id = retry.dilovod_id;
+                    draft.counterparty.dilovod_name = retry.dilovod_name;
+                    draft.counterparty.flagged = false;
+                    disambiguations = disambiguations.filter((d) => d.field !== "counterparty");
+                    isFullyResolved = disambiguations.length === 0;
+                  } else if (retry.disambiguation) {
+                    disambiguations = disambiguations.map((d) =>
+                      d.field === "counterparty" ? retry.disambiguation! : d
+                    );
+                  }
+                }
+
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === savedMsg.id
+                      ? {
+                          ...m,
+                          metadata: {
+                            type: isFullyResolved ? "draft" as const : "disambiguation" as const,
+                            draft,
+                            disambiguations: isFullyResolved ? undefined : disambiguations,
+                          },
+                        }
+                      : m
+                  )
                 );
               }
             }
-
-            // Always show the draft — flagged fields show "needs selection"
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === savedMsg.id
-                  ? {
-                      ...m,
-                      metadata: {
-                        type: isFullyResolved ? "draft" as const : "disambiguation" as const,
-                        draft,
-                        disambiguations: isFullyResolved ? undefined : disambiguations,
-                      },
-                    }
-                  : m
-              )
-            );
           }
         },
         onError: (error) => {
