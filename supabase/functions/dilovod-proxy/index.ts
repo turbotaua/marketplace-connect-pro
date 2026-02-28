@@ -10,6 +10,14 @@ const corsHeaders = {
 const DILOVOD_URL = "https://api.dilovod.ua";
 const DILOVOD_VERSION = "0.25";
 
+// Dilovod docMode IDs for documents.sale
+const DOC_MODE = {
+  goods: "1004000000000350",       // Відвантаження покупцеві
+  services: "1004000000000351",    // Надання послуг
+  commission: "1004000000000352",  // Передача комісіонеру
+  comReport: "1004000000000353",   // Звіт комісіонера
+} as const;
+
 async function callDilovod(apiKey: string, action: string, params: Record<string, unknown>) {
   const packet = { version: DILOVOD_VERSION, key: apiKey, action, params };
   console.log(`[dilovod-proxy] calling action=${action}`);
@@ -27,6 +35,24 @@ async function callDilovod(apiKey: string, action: string, params: Record<string
     throw new Error(`Dilovod API error: ${JSON.stringify(data.error)}`);
   }
   return data;
+}
+
+// Rollback helper: soft-delete previously created docs on chain failure
+async function rollbackChain(apiKey: string, chainIds: Record<string, string>) {
+  for (const [key, id] of Object.entries(chainIds)) {
+    try {
+      console.log(`[dilovod-proxy] rollback: deleting ${key}=${id}`);
+      await callDilovod(apiKey, "setDelMark", { header: { id } });
+    } catch (e) {
+      console.error(`[dilovod-proxy] rollback failed for ${key}=${id}:`, e);
+    }
+  }
+}
+
+function extractId(result: any): string {
+  if (typeof result === "string") return result;
+  if (typeof result === "number") return String(result);
+  return result?.result?.id || result?.id || result?.result || String(result);
 }
 
 // Cache helpers
@@ -72,44 +98,74 @@ serve(async (req) => {
     switch (action) {
       // Schema discovery
       case "listMetadata": {
-        result = await callDilovod(apiKey, "listMetadata", {});
+        result = await callDilovod(apiKey, "listMetadata", { lang: params.lang || "uk" });
         break;
       }
       case "getMetadata": {
-        result = await callDilovod(apiKey, "getMetadata", { objectType: params.objectType });
-        break;
-      }
-
-      // Search counterparties
-      case "searchCounterparty": {
-        const query = params.query || "";
-        const where: Record<string, unknown>[] = [];
-        if (query) {
-          where.push({ field: "name", op: "LIKE", value: `%${query}%` });
-        }
-        result = await callDilovod(apiKey, "request", {
-          from: "catalogs.partners",
-          fields: { id: "id", name: "name", code: "code" },
-          where,
-          limit: params.limit || 20,
-          offset: params.offset || 0,
+        result = await callDilovod(apiKey, "getMetadata", {
+          objectName: params.objectType || params.objectName,
+          lang: params.lang || "uk",
         });
         break;
       }
 
-      // Search items
-      case "searchItem": {
+      // Search counterparties (catalogs.persons)
+      case "searchCounterparty": {
         const query = params.query || "";
-        const where: Record<string, unknown>[] = [];
+        const filters: Record<string, unknown>[] = [];
         if (query) {
-          where.push({ field: "name", op: "LIKE", value: `%${query}%` });
+          filters.push({ alias: "person_name", operator: "%", value: query });
         }
         result = await callDilovod(apiKey, "request", {
-          from: "catalogs.products",
-          fields: { id: "id", name: "name", code: "code" },
-          where,
+          from: "catalogs.persons",
+          fields: { id: "person_id", name: "person_name", code: "person_code" },
+          filters,
           limit: params.limit || 20,
-          offset: params.offset || 0,
+        });
+        break;
+      }
+
+      // Search items (catalogs.goods)
+      case "searchItem": {
+        const query = params.query || "";
+        const filters: Record<string, unknown>[] = [];
+        if (query) {
+          filters.push({ alias: "item_name", operator: "%", value: query });
+        }
+        result = await callDilovod(apiKey, "request", {
+          from: "catalogs.goods",
+          fields: { id: "item_id", name: "item_name", code: "item_code" },
+          filters,
+          limit: params.limit || 20,
+        });
+        break;
+      }
+
+      // Search shipments (documents.sale) for returns
+      case "searchShipments": {
+        const filters: Record<string, unknown>[] = [];
+        if (params.counterpartyId) {
+          filters.push({ alias: "person", operator: "=", value: params.counterpartyId });
+        }
+        if (params.dateFrom) {
+          filters.push({ alias: "doc_date", operator: ">=", value: params.dateFrom });
+        }
+        if (params.dateTo) {
+          filters.push({ alias: "doc_date", operator: "<=", value: params.dateTo });
+        }
+        result = await callDilovod(apiKey, "request", {
+          from: "documents.sale",
+          fields: {
+            id: "doc_id",
+            date: "doc_date",
+            number: "doc_number",
+            person: "person",
+            "person.name": "person_name",
+            amountCur: "amount",
+            docMode: "docMode",
+          },
+          filters,
+          limit: params.limit || 50,
         });
         break;
       }
@@ -128,7 +184,7 @@ serve(async (req) => {
         } else {
           result = await callDilovod(apiKey, "request", {
             from: "catalogs.accounts",
-            fields: { id: "id", code: "code", name: "name" },
+            fields: { id: "acc_id", code: "acc_code", name: "acc_name" },
             limit: 200,
           });
           await setCache(supabase, "accounts", result);
@@ -144,7 +200,7 @@ serve(async (req) => {
         } else {
           result = await callDilovod(apiKey, "request", {
             from: "catalogs.firms",
-            fields: { id: "id", name: "name" },
+            fields: { id: "firm_id", name: "firm_name" },
             limit: 50,
           });
           await setCache(supabase, "firms", result);
@@ -152,7 +208,7 @@ serve(async (req) => {
         break;
       }
 
-      // Create sales order
+      // Create sales order via specialized method
       case "createSalesOrder": {
         result = await callDilovod(apiKey, "call", {
           method: "saleOrderCreate",
@@ -165,128 +221,262 @@ serve(async (req) => {
         break;
       }
 
-      // Create/save any document
+      // Create/save any document (universal)
       case "createDocument": {
         result = await callDilovod(apiKey, "saveObject", {
+          saveType: params.saveType ?? 1, // 0=save, 1=register(post), 2=unregister
           header: {
             id: params.objectType,
             ...params.header,
           },
-          saveType: params.saveType || "new",
+          ...(params.tableParts ? { tableParts: params.tableParts } : {}),
         });
         break;
       }
 
-      // Create document chain
+      // ===== CHAIN CREATION =====
       case "createChain": {
         const { actionType, draft } = params;
         const chainIds: Record<string, string> = {};
 
-        if (actionType === "sales.commission") {
-          // 1. Sales Order
-          const order = await callDilovod(apiKey, "call", {
-            method: "saleOrderCreate",
-            arguments: {
-              header: { firm: draft.firmId, person: draft.counterpartyId, date: draft.date },
-              goods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
-              placement: { autoPlacement: true },
-            },
-          });
-          chainIds.order_id = order.result?.id || order.id;
+        try {
+          if (actionType === "sales.commission") {
+            // Step 1: Sales Order (saleOrderCreate)
+            const order = await callDilovod(apiKey, "call", {
+              method: "saleOrderCreate",
+              arguments: {
+                header: { firm: draft.firmId, person: draft.counterpartyId, date: draft.date },
+                goods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
+                placement: { autoPlacement: true },
+              },
+            });
+            chainIds.order_id = extractId(order);
 
-          // 2. Customer Invoice
-          const invoice = await callDilovod(apiKey, "saveObject", {
-            header: {
-              id: "documents.customerInvoices",
-              firm: draft.firmId,
-              person: draft.counterpartyId,
-              date: draft.date,
-              basisDocument: chainIds.order_id,
-              tpGoods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
-            },
-            saveType: "new",
-          });
-          chainIds.invoice_id = invoice.result?.id || invoice.id;
+            // Step 2: Customer Invoice (documents.saleInvoice)
+            const invoice = await callDilovod(apiKey, "saveObject", {
+              saveType: 1,
+              header: {
+                id: "documents.saleInvoice",
+                firm: draft.firmId,
+                person: draft.counterpartyId,
+                date: draft.date,
+                baseDoc: chainIds.order_id,
+              },
+              tableParts: {
+                tpGoods: draft.items.map((i: any, idx: number) => ({
+                  rowNum: idx + 1,
+                  good: i.dilovod_id,
+                  qty: i.qty,
+                  price: i.price,
+                  amountCur: i.total || i.qty * i.price,
+                })),
+              },
+            });
+            chainIds.invoice_id = extractId(invoice);
 
-          // 3. Shipment (Transfer to Consignee)
-          const transfer = await callDilovod(apiKey, "saveObject", {
-            header: {
-              id: "documents.shipments",
-              firm: draft.firmId,
-              person: draft.counterpartyId,
-              date: draft.date,
-              basisDocument: chainIds.order_id,
-              operationType: "transferToConsignee",
-              tpGoods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
-            },
-            saveType: "new",
-          });
-          chainIds.transfer_id = transfer.result?.id || transfer.id;
+            // Step 3: Transfer to Consignee (documents.sale, docMode=commission)
+            const transfer = await callDilovod(apiKey, "saveObject", {
+              saveType: 1,
+              header: {
+                id: "documents.sale",
+                firm: draft.firmId,
+                person: draft.counterpartyId,
+                date: draft.date,
+                baseDoc: chainIds.order_id,
+                docMode: DOC_MODE.commission,
+              },
+              tableParts: {
+                tpGoods: draft.items.map((i: any, idx: number) => ({
+                  rowNum: idx + 1,
+                  good: i.dilovod_id,
+                  qty: i.qty,
+                  price: i.price,
+                  amountCur: i.total || i.qty * i.price,
+                })),
+              },
+            });
+            chainIds.transfer_id = extractId(transfer);
 
-        } else if (actionType === "sales.end_consumer") {
-          const order = await callDilovod(apiKey, "call", {
-            method: "saleOrderCreate",
-            arguments: {
-              header: { firm: draft.firmId, person: draft.counterpartyId, date: draft.date },
-              goods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
-              placement: { autoPlacement: true },
-            },
-          });
-          chainIds.order_id = order.result?.id || order.id;
+            // Step 4: Commission Report (documents.sale, docMode=comReport)
+            const comReport = await callDilovod(apiKey, "saveObject", {
+              saveType: 1,
+              header: {
+                id: "documents.sale",
+                firm: draft.firmId,
+                person: draft.counterpartyId,
+                date: draft.date,
+                baseDoc: chainIds.transfer_id,
+                docMode: DOC_MODE.comReport,
+              },
+              tableParts: {
+                tpGoods: draft.items.map((i: any, idx: number) => ({
+                  rowNum: idx + 1,
+                  good: i.dilovod_id,
+                  qty: i.qty,
+                  price: i.price,
+                  amountCur: i.total || i.qty * i.price,
+                  comPrice: i.comPrice || i.price,
+                  comAmount: i.comAmount || (i.total || i.qty * i.price),
+                })),
+              },
+            });
+            chainIds.commission_report_id = extractId(comReport);
 
-          const shipment = await callDilovod(apiKey, "saveObject", {
-            header: {
-              id: "documents.shipments",
-              firm: draft.firmId,
-              person: draft.counterpartyId,
-              date: draft.date,
-              basisDocument: chainIds.order_id,
-              tpGoods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
-            },
-            saveType: "new",
-          });
-          chainIds.shipment_id = shipment.result?.id || shipment.id;
+          } else if (actionType === "sales.end_consumer") {
+            // Step 1: Sales Order
+            const order = await callDilovod(apiKey, "call", {
+              method: "saleOrderCreate",
+              arguments: {
+                header: { firm: draft.firmId, person: draft.counterpartyId, date: draft.date },
+                goods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
+                placement: { autoPlacement: true },
+              },
+            });
+            chainIds.order_id = extractId(order);
 
-        } else if (actionType === "sales.return") {
-          const ret = await callDilovod(apiKey, "saveObject", {
-            header: {
-              id: "documents.returnFromBuyer",
-              firm: draft.firmId,
-              person: draft.counterpartyId,
-              date: draft.date,
-              basisDocument: draft.originalShipmentId,
-              tpGoods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.return_qty, price: i.price })),
-            },
-            saveType: "new",
-          });
-          chainIds.return_id = ret.result?.id || ret.id;
+            // Step 2: Shipment (documents.sale, docMode=goods)
+            const sale = await callDilovod(apiKey, "saveObject", {
+              saveType: 1,
+              header: {
+                id: "documents.sale",
+                firm: draft.firmId,
+                person: draft.counterpartyId,
+                date: draft.date,
+                baseDoc: chainIds.order_id,
+                docMode: DOC_MODE.goods,
+              },
+              tableParts: {
+                tpGoods: draft.items.map((i: any, idx: number) => ({
+                  rowNum: idx + 1,
+                  good: i.dilovod_id,
+                  qty: i.qty,
+                  price: i.price,
+                  amountCur: i.total || i.qty * i.price,
+                })),
+              },
+            });
+            chainIds.shipment_id = extractId(sale);
 
-        } else if (actionType === "purchase.goods" || actionType === "purchase.services") {
-          const receipt = await callDilovod(apiKey, "saveObject", {
-            header: {
-              id: "documents.goodsReceipt",
-              firm: draft.firmId,
-              person: draft.counterpartyId,
-              date: draft.date,
-              tpGoods: draft.items.map((i: any) => ({
-                good: i.dilovod_id,
-                qty: i.qty,
-                price: i.price,
-                account: i.accountId,
-              })),
-            },
-            saveType: "new",
-          });
-          chainIds.receipt_id = receipt.result?.id || receipt.id;
+          } else if (actionType === "sales.return") {
+            // Return from buyer (documents.saleReturn, baseDoc = original shipment)
+            const ret = await callDilovod(apiKey, "saveObject", {
+              saveType: 1,
+              header: {
+                id: "documents.saleReturn",
+                firm: draft.firmId,
+                person: draft.counterpartyId,
+                date: draft.date,
+                baseDoc: draft.originalShipmentId,
+              },
+              tableParts: {
+                tpGoods: draft.items.map((i: any, idx: number) => ({
+                  rowNum: idx + 1,
+                  good: i.dilovod_id,
+                  qty: i.return_qty || i.qty,
+                  price: i.price,
+                  amountCur: (i.return_qty || i.qty) * i.price,
+                })),
+              },
+            });
+            chainIds.return_id = extractId(ret);
+
+          } else if (actionType === "purchase.goods" || actionType === "purchase.services") {
+            // Optional Step 1: Supplier Order (documents.purchaseOrder)
+            if (draft.createSupplierOrder) {
+              const supplierOrder = await callDilovod(apiKey, "saveObject", {
+                saveType: 1,
+                header: {
+                  id: "documents.purchaseOrder",
+                  firm: draft.firmId,
+                  person: draft.counterpartyId,
+                  date: draft.date,
+                },
+                tableParts: {
+                  tpGoods: draft.items.map((i: any, idx: number) => ({
+                    rowNum: idx + 1,
+                    good: i.dilovod_id,
+                    qty: i.qty,
+                    price: i.price,
+                    amountCur: i.total || i.qty * i.price,
+                  })),
+                },
+              });
+              chainIds.supplier_order_id = extractId(supplierOrder);
+            }
+
+            // Step 2 (or 1): Goods Receipt (documents.purchase)
+            const receipt = await callDilovod(apiKey, "saveObject", {
+              saveType: 1,
+              header: {
+                id: "documents.purchase",
+                firm: draft.firmId,
+                person: draft.counterpartyId,
+                date: draft.date,
+                ...(chainIds.supplier_order_id ? { baseDoc: chainIds.supplier_order_id } : {}),
+              },
+              tableParts: {
+                tpGoods: draft.items.map((i: any, idx: number) => ({
+                  rowNum: idx + 1,
+                  good: i.dilovod_id,
+                  qty: i.qty,
+                  price: i.price,
+                  amountCur: i.total || i.qty * i.price,
+                  ...(i.accountId ? { accGood: i.accountId } : {}),
+                })),
+              },
+            });
+            chainIds.receipt_id = extractId(receipt);
+
+          } else if (actionType === "production.order") {
+            // Production order (documents.prodOrder)
+            const prodOrder = await callDilovod(apiKey, "saveObject", {
+              saveType: 1,
+              header: {
+                id: "documents.prodOrder",
+                firm: draft.firmId,
+                date: draft.date,
+                ...(draft.counterpartyId ? { person: draft.counterpartyId } : {}),
+              },
+              tableParts: {
+                tpGoods: draft.items.map((i: any, idx: number) => ({
+                  rowNum: idx + 1,
+                  good: i.dilovod_id,
+                  qty: i.qty,
+                  ...(i.price ? { price: i.price, amountCur: i.total || i.qty * i.price } : {}),
+                })),
+              },
+            });
+            chainIds.prod_order_id = extractId(prodOrder);
+          }
+        } catch (chainError) {
+          // Rollback all previously created documents
+          if (Object.keys(chainIds).length > 0) {
+            console.error(`[dilovod-proxy] chain failed at step, rolling back ${Object.keys(chainIds).length} docs`);
+            await rollbackChain(apiKey, chainIds);
+          }
+          throw chainError;
         }
 
         result = { chainIds };
         break;
       }
 
+      // Check product specification
+      case "getProductSpec": {
+        const product = await callDilovod(apiKey, "getObject", { id: params.productId });
+        result = {
+          product,
+          hasSpecification: !!(product?.tableParts?.tpSpecification?.length > 0 ||
+                               product?.result?.tableParts?.tpSpecification?.length > 0),
+        };
+        break;
+      }
+
       // Soft delete
       case "setDelMark": {
-        result = await callDilovod(apiKey, "setDelMark", { id: params.id, del: params.del ?? true });
+        result = await callDilovod(apiKey, "setDelMark", {
+          header: { id: params.id },
+        });
         break;
       }
 

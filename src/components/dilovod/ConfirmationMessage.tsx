@@ -6,12 +6,15 @@ interface ConfirmationMessageProps {
 }
 
 const idLabels: Record<string, string> = {
-  order_id: "Замовлення",
-  invoice_id: "Рахунок",
+  order_id: "Замовлення покупця",
+  invoice_id: "Рахунок покупцеві",
   transfer_id: "Передача комісіонеру",
+  commission_report_id: "Звіт комісіонера",
   shipment_id: "Відвантаження",
-  return_id: "Повернення",
-  receipt_id: "Надходження",
+  return_id: "Повернення від покупця",
+  supplier_order_id: "Замовлення постачальнику",
+  receipt_id: "Надходження товарів/послуг",
+  prod_order_id: "Замовлення на виробництво",
 };
 
 export const ConfirmationMessage = ({ ids, actionType }: ConfirmationMessageProps) => {
