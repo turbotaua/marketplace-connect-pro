@@ -180,7 +180,7 @@ async function callProxy(action: string, params: Record<string, unknown>): Promi
 }
 
 function normalizeForCompare(s: string): string {
-  return s.toLowerCase().replace(/['"«»„"]/g, "").trim();
+  return s.toLowerCase().replace(/['"«»„""''`,.\-;:]/g, "").replace(/\s+/g, " ").trim();
 }
 
 function calculateMatchScore(query: string, candidateName: string): number {
@@ -198,12 +198,22 @@ function calculateMatchScore(query: string, candidateName: string): number {
   if (c.includes(q)) return 0.9;
   if (q.includes(c)) return 0.85;
 
+  // Word-overlap scoring (ignores punctuation differences)
   const qWords = q.split(/\s+/).filter(Boolean);
   const cWords = c.split(/\s+/).filter(Boolean);
-  const matchedWords = qWords.filter((w) =>
-    cWords.some((cw) => cw.includes(w) || w.includes(cw))
-  );
-  return matchedWords.length / Math.max(qWords.length, 1);
+  if (qWords.length > 0 && cWords.length > 0) {
+    const matchedWords = qWords.filter((w) =>
+      cWords.some((cw) => cw.includes(w) || w.includes(cw))
+    );
+    const overlapScore = matchedWords.length / Math.max(qWords.length, cWords.length);
+    // Boost if all query words matched
+    if (matchedWords.length === qWords.length) {
+      return Math.max(0.8, overlapScore);
+    }
+    return overlapScore;
+  }
+
+  return 0;
 }
 
 /**
@@ -228,33 +238,47 @@ async function searchCatalogRaw(
 
 /**
  * Multi-strategy smart search:
- * 1. Normalized full name
- * 2. Fallback: max 1 distinctive word (if 0 results)
- * Deduplicates and scores all results.
+ * For counterparties: parallel full-name + per-word searches, then fallback.
+ * For items: full name, then single-word fallback.
  */
 async function smartSearch(
   type: "item" | "counterparty",
   originalQuery: string
 ): Promise<ResolvedCandidate[]> {
   const normalized = normalizeSearchQuery(originalQuery, type);
-  console.log(`[smartSearch] type=${type}, original="${originalQuery}", normalized="${normalized}"`);
+  const words = getDistinctiveWords(normalized);
+  console.log(`[smartSearch] type=${type}, original="${originalQuery}", normalized="${normalized}", words=${JSON.stringify(words)}`);
 
-  // Strategy 1: search normalized full name
-  let candidates = await searchCatalogRaw(type, normalized);
+  let allCandidates: ResolvedCandidate[] = [];
 
-  // Strategy 2: fallback with max 1 distinctive word only
-  if (candidates.length === 0) {
-    const words = getDistinctiveWords(normalized);
-    if (words.length > 0) {
+  if (type === "counterparty" && words.length >= 2) {
+    // Strategy 1+2 in parallel: full name + each word separately
+    const searches = [
+      searchCatalogRaw(type, normalized),
+      ...words.map((w) => searchCatalogRaw(type, w)),
+    ];
+    const results = await Promise.all(searches);
+    allCandidates = results.flat();
+    console.log(`[smartSearch] parallel strategies returned ${allCandidates.length} total candidates`);
+
+    // Strategy 3: fallback to first word only if parallel returned nothing
+    if (allCandidates.length === 0 && words.length > 0) {
+      console.log(`[smartSearch] fallback to first word: "${words[0]}"`);
+      allCandidates = await searchCatalogRaw(type, words[0]);
+    }
+  } else {
+    // Items or single-word counterparty: original behavior
+    allCandidates = await searchCatalogRaw(type, normalized);
+    if (allCandidates.length === 0 && words.length > 0) {
       console.log(`[smartSearch] fallback search with word: "${words[0]}"`);
-      candidates = await searchCatalogRaw(type, words[0]);
+      allCandidates = await searchCatalogRaw(type, words[0]);
     }
   }
 
-  // Deduplicate by id
+  // Deduplicate by id and score
   const seen = new Set<string>();
   const unique: ResolvedCandidate[] = [];
-  for (const c of candidates) {
+  for (const c of allCandidates) {
     if (!seen.has(c.id)) {
       seen.add(c.id);
       unique.push({
