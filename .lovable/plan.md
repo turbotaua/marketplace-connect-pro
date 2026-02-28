@@ -1,53 +1,42 @@
 
 
-## Plan: Catalog Resolution — Search Real Products & Counterparties Before Draft
+## Problem Analysis
 
-### Problem
-AI returns `extracted_name` fields that don't match actual Dilovod catalog entries. This creates duplicate items. Need to search real Dilovod catalog and resolve names to real IDs before finalizing the draft.
+From the screenshot and network logs, I identified two bugs:
 
-### Architecture
+1. **Duplicate messages sent**: Two identical POST requests fire to `dilovod-chat` simultaneously. The `handleSend` callback depends on `messages` in its dependency array, but `saveMessage` mutates `messages` — causing React to re-create the callback mid-execution, leading to double invocation.
 
-```text
-User message → AI streams response with draft JSON
-→ Frontend parses draft from AI response
-→ For each extracted_name (items + counterparty):
-   call dilovod-proxy searchItem / searchCounterparty
-→ If 1 match with high confidence → auto-resolve (set dilovod_id)
-→ If multiple matches → show DisambiguationCard inline
-→ If 0 matches → show warning, offer "create new"
-→ Only after all resolved → show final DraftCard with real IDs
-```
+2. **Infinite spinner after AI responds**: The AI response streams back fine (200 OK), but then `resolveDraft()` calls `dilovod-proxy` → external Dilovod API with **no timeout**. If the API is slow or unresponsive, the spinner stays forever. There's also no error handling visible to the user.
+
+## Fix Plan
+
+### 1. Fix duplicate sends in `Dilovod.tsx`
+
+- Use a `useRef` for the processing flag instead of `useState` — refs don't cause re-renders and can't go stale in closures
+- Remove `messages` from `handleSend` dependency array — capture current messages via `setMessages` callback or a ref
+- Add a `sendingRef` that's checked synchronously to prevent double-entry
+
+### 2. Add timeout to `draftResolver.ts`
+
+- Wrap each `callProxy` fetch with `AbortController` + 10s timeout
+- If proxy times out, return empty candidates (don't block the entire flow)
+- Add overall `resolveDraft` timeout of 15s — if exceeded, save message as plain text
+
+### 3. Add timeout to `callDilovod` in `dilovod-proxy/index.ts`
+
+- Add `AbortController` with 15s timeout to the external Dilovod API fetch
+- Return a clear error message on timeout
+
+### 4. Better error feedback in `Dilovod.tsx`
+
+- If `resolveDraft` fails or times out, show toast with message and save assistant response as plain text (not lost)
+- Ensure `setIsProcessing(false)` is called in all error paths
 
 ### Files to Change
 
-| File | What |
+| File | Change |
 |---|---|
-| `src/lib/draftResolver.ts` | **New** — parse draft JSON from AI text, call proxy to resolve each name, return resolved draft + disambiguation needs |
-| `src/pages/Dilovod.tsx` | After streaming completes, detect draft JSON in response, run resolver, show disambiguation or resolved draft |
-| `src/components/dilovod/ChatThread.tsx` | Render DisambiguationCard for unresolved items inline in chat |
-| `src/components/dilovod/DisambiguationCard.tsx` | Minor updates — support item vs counterparty type, callback with full candidate data |
-| `src/components/dilovod/DraftCard.tsx` | Show resolved names (from Dilovod) alongside extracted names, show ✓ for resolved items |
-
-### Draft Resolution Logic (`draftResolver.ts`)
-
-1. `parseDraftFromText(text: string)` — regex to find ```json blocks with `"type": "draft"`, parse them
-2. `resolveDraft(draft)` — for each `item.extracted_name`, call `POST /dilovod-proxy` with `{ action: "searchItem", params: { query: name } }`. For `counterparty.extracted_name`, call `searchCounterparty`.
-3. Return `{ resolvedDraft, disambiguations: [{field, extractedName, candidates}] }`
-4. Scoring: if top result name contains the search query (case-insensitive) and only 1 result → auto-resolve. Otherwise → disambiguation.
-
-### UX Flow
-
-1. AI responds with draft JSON in markdown
-2. Frontend detects it, shows "🔍 Пошук у каталозі Діловод..." indicator
-3. For each resolved item → ✓ icon + real Dilovod name
-4. For each ambiguous item → DisambiguationCard with candidates from Dilovod
-5. User clicks candidate → item resolved, card collapses
-6. When all items + counterparty resolved → DraftCard becomes actionable (can submit)
-
-### Proxy Calls (already exist)
-
-- `searchItem`: `{ action: "searchItem", params: { query: "свічки каштани" } }` → returns `[{id, name, code}]`
-- `searchCounterparty`: `{ action: "searchCounterparty", params: { query: "Тест Тестинг" } }` → returns `[{id, name, code}]`
-
-No backend changes needed — proxy already supports these searches.
+| `src/pages/Dilovod.tsx` | Use ref for processing guard, fix `handleSend` deps to prevent double-fire |
+| `src/lib/draftResolver.ts` | Add 10s timeout per proxy call, 15s overall timeout |
+| `supabase/functions/dilovod-proxy/index.ts` | Add 15s timeout to `callDilovod` fetch |
 
