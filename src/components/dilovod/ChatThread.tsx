@@ -3,7 +3,7 @@ import type { ChatMessage } from "@/pages/Dilovod";
 import { DraftCard } from "./DraftCard";
 import { ConfirmationMessage } from "./ConfirmationMessage";
 import { cn } from "@/lib/utils";
-import { Bot, User } from "lucide-react";
+import { Sparkles, User } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 interface ChatThreadProps {
@@ -18,34 +18,38 @@ export const ChatThread = ({ messages }: ChatThreadProps) => {
   }, [messages]);
 
   return (
-    <div className="h-full overflow-y-auto py-4 space-y-4 px-1">
+    <div className="h-full overflow-y-auto py-6 space-y-6 px-4">
       {messages.map((msg) => (
         <div
           key={msg.id}
           className={cn(
-            "flex gap-3 max-w-[85%]",
+            "flex gap-3 max-w-[90%]",
             msg.role === "user" ? "ml-auto flex-row-reverse" : ""
           )}
         >
           {/* Avatar */}
           <div
             className={cn(
-              "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center",
+              "flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center mt-0.5",
               msg.role === "user"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground"
+                ? "bg-primary/10 text-primary"
+                : "bg-primary/10 text-primary"
             )}
           >
-            {msg.role === "user" ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+            {msg.role === "user" ? (
+              <User className="h-3.5 w-3.5" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
           </div>
 
           {/* Content */}
           <div
             className={cn(
-              "rounded-lg px-4 py-2.5 text-sm",
+              "rounded-2xl px-4 py-3 text-sm leading-relaxed",
               msg.role === "user"
                 ? "bg-primary text-primary-foreground"
-                : "bg-muted text-foreground"
+                : "bg-card border border-border text-foreground"
             )}
           >
             {msg.metadata?.type === "draft" && msg.metadata.draft ? (
