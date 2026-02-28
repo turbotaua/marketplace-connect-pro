@@ -312,21 +312,33 @@ async function resolveField(
     const searchType = type === "counterparty" ? "counterparty" : "item";
     const sorted = await smartSearch(searchType, extractedName);
 
-    if (sorted.length === 1 && (sorted[0].score ?? 0) >= SINGLE_CANDIDATE_THRESHOLD) {
+    const queryWords = normalizeForCompare(extractedName).split(/\s+/).filter(Boolean);
+    const isPartialQuery = queryWords.length <= 1;
+    const bestScore = sorted[0]?.score ?? 0;
+
+    // For short/partial queries with multiple candidates — ALWAYS disambiguate
+    if (isPartialQuery && sorted.length > 1) {
+      console.log(`[resolveField] Partial query "${extractedName}" has ${sorted.length} candidates — showing disambiguation`);
+      return {
+        flagged: true,
+        disambiguation: { field: type, index, extractedName, candidates: sorted.slice(0, 5) },
+      };
+    }
+
+    // Single candidate with decent score — auto-resolve
+    if (sorted.length === 1 && bestScore >= SINGLE_CANDIDATE_THRESHOLD) {
       return { dilovod_id: sorted[0].id, dilovod_name: sorted[0].name, flagged: false };
     }
-    if (sorted.length > 0 && (sorted[0].score ?? 0) >= AUTO_RESOLVE_THRESHOLD) {
+
+    // Multiple candidates, multi-word query, high confidence — auto-resolve
+    if (sorted.length > 0 && !isPartialQuery && bestScore >= AUTO_RESOLVE_THRESHOLD) {
       return { dilovod_id: sorted[0].id, dilovod_name: sorted[0].name, flagged: false };
     }
+
     // Needs disambiguation or no results
     return {
       flagged: true,
-      disambiguation: {
-        field: type,
-        index,
-        extractedName,
-        candidates: sorted.slice(0, 5),
-      },
+      disambiguation: { field: type, index, extractedName, candidates: sorted.slice(0, 5) },
     };
   } catch (err) {
     console.error(`[resolveField] ${type} "${extractedName}" failed:`, err);

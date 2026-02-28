@@ -1,6 +1,8 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { HelpCircle, Plus } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Plus, Search } from "lucide-react";
+import { useState } from "react";
+import { cn } from "@/lib/utils";
 
 interface Candidate {
   id: string;
@@ -24,46 +26,74 @@ export const DisambiguationCard = ({
   onSelect,
   onCreateNew,
 }: DisambiguationCardProps) => {
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
   return (
-    <Card className="w-full max-w-sm border-yellow-500/50">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <HelpCircle className="h-4 w-4 text-yellow-600" />
-          {title}
-        </CardTitle>
+    <Card className="w-full max-w-sm border-border/60 shadow-sm">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium text-foreground">{title}</span>
+        </div>
         <p className="text-xs text-muted-foreground">
-          Знайдено «{extractedName}». Оберіть відповідник:
+          Знайдено «<span className="font-medium text-foreground">{extractedName}</span>» — оберіть:
         </p>
-      </CardHeader>
-      <CardContent className="space-y-1.5">
-        {candidates.map((c) => (
-          <Button
-            key={c.id}
-            variant="outline"
-            size="sm"
-            className="w-full justify-start text-left h-auto py-2"
-            onClick={() => onSelect(c.id)}
-          >
-            <div className="flex flex-col items-start">
-              <span className="text-xs font-medium">{c.name}</span>
-              {c.code && (
-                <span className="text-[10px] text-muted-foreground">
-                  Код: {c.code}
-                  {c.score !== undefined && ` • Збіг: ${(c.score * 100).toFixed(0)}%`}
-                </span>
-              )}
-            </div>
-          </Button>
-        ))}
+
+        <div className="space-y-1">
+          {candidates.map((c) => {
+            const scorePercent = c.score !== undefined ? Math.round(c.score * 100) : null;
+            return (
+              <button
+                key={c.id}
+                onClick={() => onSelect(c.id)}
+                onMouseEnter={() => setHoveredId(c.id)}
+                onMouseLeave={() => setHoveredId(null)}
+                className={cn(
+                  "w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left transition-colors",
+                  "border border-transparent",
+                  hoveredId === c.id
+                    ? "bg-accent/50 border-border"
+                    : "hover:bg-accent/30"
+                )}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex-shrink-0 w-4 h-4 rounded-full border-2 border-muted-foreground/30 flex items-center justify-center">
+                    {hoveredId === c.id && (
+                      <div className="w-2 h-2 rounded-full bg-primary" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium text-foreground block truncate">
+                      {c.name}
+                    </span>
+                    {c.code && (
+                      <span className="text-[11px] text-muted-foreground">
+                        {c.code}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {scorePercent !== null && (
+                  <Badge
+                    variant="secondary"
+                    className="text-[10px] px-1.5 py-0 h-5 flex-shrink-0 font-normal"
+                  >
+                    {scorePercent}%
+                  </Badge>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
         {onCreateNew && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start gap-2 text-xs"
+          <button
             onClick={onCreateNew}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors pt-1"
           >
-            <Plus className="h-3 w-3" /> Створити нового
-          </Button>
+            <Plus className="h-3 w-3" />
+            <span>Створити нового</span>
+          </button>
         )}
       </CardContent>
     </Card>
