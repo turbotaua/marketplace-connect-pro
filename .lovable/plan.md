@@ -1,29 +1,28 @@
 
 
-## Problem: Counterparty search fails on multi-word names
+## Problem
 
-The Dilovod API `%` operator does **exact substring** matching. "Зелень Львів" → 0 results, but "зелень" alone → finds "Зелень, Львів". The AI often extracts names without punctuation (commas, dots), so multi-word searches fail silently.
+Two issues:
+1. **Search works but scoring is wrong for partial matches** — "зелень" finds "Зелень, Львів" via API (`%` operator), but `calculateMatchScore("зелень", "Зелень, Львів")` returns 0.9 which auto-resolves without asking. If there are multiple counterparties containing "зелень", user never sees them. The threshold (0.85) is too aggressive for short/partial queries.
+2. **Disambiguation UI is basic** — current `DisambiguationCard` uses plain buttons in a yellow-bordered card. User wants Lovable-style quiz cards: clean, inline, with radio-button feel.
 
-Current `smartSearch` for counterparties only tries:
-1. Full normalized query → fails if punctuation differs
-2. Fallback: first distinctive word → works but only triggers if step 1 returns 0
+## Plan (2 files)
 
-### Fix: Multi-strategy counterparty search
+### 1. `src/lib/draftResolver.ts` — Smarter auto-resolve for short queries
 
-**File: `src/lib/draftResolver.ts`** — rewrite `smartSearch` for counterparties:
+When the search query is significantly shorter than the best candidate's name (e.g. "зелень" vs "Зелень, Львів"), **always show disambiguation** instead of auto-resolving. This prevents silently picking the wrong counterparty when the user gave a partial name.
 
-1. **Strategy 1**: Search the full normalized name (current behavior)
-2. **Strategy 2**: If the query has 2+ words, search **each word in parallel** and merge/deduplicate results — so "Зелень Львів" searches "Зелень" AND "Львів" simultaneously, both find the same counterparty
-3. **Strategy 3**: Fallback to first distinctive word (current behavior, already exists)
-4. Run strategies 1+2 in parallel (`Promise.all`), only fall back to 3 if both return 0
+Changes to `resolveField`:
+- If the normalized query is ≤ 1 word and there are multiple candidates, **always return disambiguation** regardless of score
+- Only auto-resolve single-word queries if there's exactly 1 candidate with score ≥ 0.9
 
-**Scoring improvements** in `calculateMatchScore`:
-- Strip commas, dots, dashes before comparing (`normalizeForCompare` already strips quotes, add `,.-`)
-- Add word-overlap scoring that ignores punctuation: "Зелень Львів" vs "Зелень, Львів" should score ~1.0
+### 2. `src/components/dilovod/DisambiguationCard.tsx` — Quiz-style UI
 
-### Changes
-
-| File | Change |
-|---|---|
-| `src/lib/draftResolver.ts` | `smartSearch`: for counterparties, search each word in parallel and merge results. Improve `normalizeForCompare` to strip commas/dots. |
+Redesign the disambiguation card to match a modern quiz/poll UI:
+- Clean white card with subtle border (no yellow warning color)
+- Question header: "Який контрагент?" / "Який товар?"
+- Radio-button style options with name, code, and match percentage as a subtle badge
+- Hover highlight, selected state
+- "Створити нового" as a text link at the bottom
+- Compact, inline in the chat bubble
 
