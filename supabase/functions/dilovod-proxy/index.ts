@@ -21,20 +21,32 @@ const DOC_MODE = {
 async function callDilovod(apiKey: string, action: string, params: Record<string, unknown>) {
   const packet = { version: DILOVOD_VERSION, key: apiKey, action, params };
   console.log(`[dilovod-proxy] calling action=${action}`);
-  const res = await fetch(DILOVOD_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(packet),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Dilovod HTTP ${res.status}: ${text}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(DILOVOD_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(packet),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Dilovod HTTP ${res.status}: ${text}`);
+    }
+    const data = await res.json();
+    if (data.error) {
+      throw new Error(`Dilovod API error: ${JSON.stringify(data.error)}`);
+    }
+    return data;
+  } catch (e) {
+    if (e.name === "AbortError") {
+      throw new Error(`Dilovod API timeout after 15s for action=${action}`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeout);
   }
-  const data = await res.json();
-  if (data.error) {
-    throw new Error(`Dilovod API error: ${JSON.stringify(data.error)}`);
-  }
-  return data;
 }
 
 // Rollback helper: soft-delete previously created docs on chain failure

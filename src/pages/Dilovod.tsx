@@ -69,6 +69,9 @@ const Dilovod = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sendingRef = useRef(false);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   const hasMessages = messages.length > 0;
 
@@ -121,7 +124,8 @@ const Dilovod = () => {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text && !uploadedFile) return;
-    if (isProcessing) return;
+    if (sendingRef.current) return;
+    sendingRef.current = true;
 
     setInput("");
     const file = uploadedFile;
@@ -141,7 +145,7 @@ const Dilovod = () => {
     });
 
     const historyForAI = [
-      ...messages
+      ...messagesRef.current
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
       { role: "user" as const, content: userContent },
@@ -182,6 +186,7 @@ const Dilovod = () => {
 
           if (!assistantSoFar) {
             setIsProcessing(false);
+            sendingRef.current = false;
             return;
           }
 
@@ -203,12 +208,15 @@ const Dilovod = () => {
             ]);
 
             try {
-              const { draft, disambiguations, isFullyResolved } = await resolveDraft(parsedDraft);
+              const resolvePromise = resolveDraft(parsedDraft);
+              const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("Resolution timeout")), 15000)
+              );
+              const { draft, disambiguations, isFullyResolved } = await Promise.race([resolvePromise, timeoutPromise]);
 
               // Remove resolving placeholder
               setMessages((prev) => prev.filter((m) => m.id !== resolvingId));
 
-              // Save the message with resolved draft
               await saveMessage({
                 role: "assistant",
                 content: assistantSoFar,
@@ -220,15 +228,14 @@ const Dilovod = () => {
               });
             } catch (err) {
               console.error("Draft resolution failed:", err);
-              // Remove resolving placeholder, save as regular text
               setMessages((prev) => prev.filter((m) => m.id !== resolvingId));
+              toast.error("Не вдалося знайти товари в каталозі. Відповідь збережено як текст.");
               await saveMessage({
                 role: "assistant",
                 content: assistantSoFar,
               });
             }
           } else {
-            // No draft — save as regular text
             await saveMessage({
               role: "assistant",
               content: assistantSoFar,
@@ -236,18 +243,21 @@ const Dilovod = () => {
           }
 
           setIsProcessing(false);
+          sendingRef.current = false;
         },
         onError: (error) => {
           toast.error(error);
           setIsProcessing(false);
+          sendingRef.current = false;
         },
       });
     } catch (e) {
       console.error("Stream error:", e);
       toast.error("Помилка з'єднання з AI");
       setIsProcessing(false);
+      sendingRef.current = false;
     }
-  }, [input, uploadedFile, isProcessing, selectedAction, messages, saveMessage, setMessages]);
+  }, [input, uploadedFile, selectedAction, saveMessage, setMessages]);
 
   const handleFileSelect = async (file: File) => {
     setUploadedFile(file);
