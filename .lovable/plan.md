@@ -1,209 +1,135 @@
 
 
-# Dilovod AI Portal -- Implementation Plan
+# Gap Analysis: Business Workflows vs Current Implementation
 
-## Context
-
-This plan synthesizes the CTO's PRD with our actual tech stack (React + Supabase Edge Functions + Lovable AI). The CTO's PRD specifies Next.js + Python FastAPI + Claude -- we adapt everything to our stack while preserving all business logic requirements.
-
-**Critical prerequisite:** `DILOVOD_API_KEY` secret is not configured. We cannot proceed with any Dilovod integration until it is provided.
-
----
-
-## Architecture (adapted to our stack)
+## Your Actual Business Workflows (from instructions)
 
 ```text
-┌──────────────────────────────────────────┐
-│         React Frontend (/dilovod)        │
-│  Chat Thread | File Upload | Action Tags │
-│  Draft Card (editable) | Approve/Reject  │
-└──────────────┬───────────────────────────┘
-               │ supabase.functions.invoke()
-┌──────────────▼───────────────────────────┐
-│       Supabase Edge Functions            │
-│                                          │
-│  dilovod-proxy     → Dilovod API calls   │
-│  dilovod-extract   → Lovable AI gateway  │
-│  dilovod-chat      → Orchestration       │
-└──────────────┬───────────────────────────┘
-               │ POST https://api.dilovod.ua
-               ▼
-         Dilovod ERP
+SALES (ПРОДАЖІ):
+1.1 Замовлення магазини (комісія)     → documents.salesOrders
+1.2 Рахунок покупцю                   → documents.customerInvoices (на підставі 1.1)
+1.3 Відвантаження → Передача комісіон. → documents.shipments, type change (на підставі 1.1)
+1.4 Звіт по продажам комісіонера      → documents.commissionReport (на підставі 1.3)
+1.5 Відвантаження кінцевим споживачам  → documents.shipments (на підставі 1.1)
+1.6 Повернення покупців               → documents.returnFromBuyer (на підставі shipment)
+
+PURCHASES (ЗАКУПІВЛІ):
+2.1 Замовлення постачальникам         → documents.supplierOrders
+2.2 Надходження товарів               → documents.goodsReceipt (на підставі 2.1 OR standalone)
+2.3 Надходження послуг                → documents.goodsReceipt (same, nomenclature = service)
+
+PRODUCTION (ВИРОБНИЦТВО):
+3.1 Перевірка специфікації            → catalogs.products → tab "Специфікація"
+3.2 Замовлення на виробництво         → documents.productionOrders + auto-fill from spec
 ```
 
----
+## What We Have vs What's Missing
 
-## Phase 0: Prerequisites (before any code)
+### Commission Chain (sales.commission)
+**Current code (lines 185-224):** Order → Invoice → Shipment(transferToConsignee)
+**Missing:**
+- **Step 1.4: Звіт комісіонера** -- completely absent. Per your instructions, this is created from the Shipment, NOT from Order. Our chain stops at 3 docs, should be 4.
+- `operationType: "transferToConsignee"` -- field name is UNVERIFIED. We guessed it. The Dilovod API might use a different field name (e.g., `shipmentType`, `documentType`, or an enum ID). This is the **#1 critical risk** -- if wrong, the entire commission chain produces incorrect documents.
+- `basisDocument` field name -- also unverified. Could be `parentDocument`, `baseDocument`, etc.
 
-1. **Request `DILOVOD_API_KEY` secret** from user
-2. Confirm Dilovod base URL (`https://api.dilovod.ua`)
-3. Confirm test data exists (at least 1 counterparty, 1 product in Dilovod)
+### Purchases Chain
+**Current code (lines 264-281):** Creates GoodsReceipt directly.
+**Missing:**
+- **Step 2.1: Замовлення постачальникам** -- not implemented at all. Your instructions show a two-step flow: SupplierOrder → GoodsReceipt (на підставі). We skip the supplier order entirely.
+- No `documents.supplierOrders` support anywhere.
+- The "OR standalone" path (create GoodsReceipt without order) exists but the linked path doesn't.
 
-Without the API key, the project cannot proceed past this point.
+### Production
+**Entirely missing.** Not in action types, not in UI, not in proxy. Your instructions describe:
+- Checking product specifications in catalog
+- Creating production orders with auto-fill from specs
+- Account 26 mapping for production items
 
----
-
-## Phase 1: Database Schema + Dilovod Proxy Edge Function
-
-### Database (single migration)
-
-**New tables:**
-
-- `dilovod_sessions` -- id, user_id, created_at, last_active_at
-- `dilovod_messages` -- id, session_id, role (user/assistant/system), content, metadata (jsonb), created_at
-- `dilovod_drafts` -- id, session_id, user_id, action_type (text: sales.commission / sales.end_consumer / sales.return / purchase.goods / purchase.services), status (draft / needs_attention / approved / rejected / written / error), source_file_url, payload (jsonb), flags (text[]), dilovod_ids (jsonb), created_at, updated_at
-- `dilovod_audit_log` -- id, draft_id, user_id, action_type, event_type (extracted / approved / written / rejected / error), source_file_url, payload_snapshot (jsonb), dilovod_ids (jsonb), error_message, created_at -- **append-only** (RLS: SELECT + INSERT only, no UPDATE/DELETE)
-- `dilovod_catalog_cache` -- cache_key (text PK), value_json (jsonb), fetched_at, ttl_hours (default 24)
-
-All tables get RLS policies using existing `is_admin()` function. Audit log gets INSERT+SELECT only (no UPDATE/DELETE).
-
-### Edge Function: `dilovod-proxy`
-
-Single edge function that wraps all Dilovod API calls. Actions exposed via `action` param in request body:
-
-- `listMetadata` / `getMetadata` -- schema discovery
-- `searchCounterparty(query)` -- `request` to `catalogs.partners` with LIKE filter
-- `searchItem(query)` -- `request` to `catalogs.products` with LIKE filter
-- `createSalesOrder(header, goods)` -- `call` method `saleOrderCreate`
-- `createDocument(objectType, header)` -- `saveObject` for shipments, receipts, returns, invoices
-- `getObject(id)` -- fetch single object
-- `listAccounts()` -- fetch chart of accounts (cached)
-- `listFirms()` -- fetch company entities (cached)
-
-All requests go through `https://api.dilovod.ua` with POST, JSON body containing `version: "0.25"`, `key: DILOVOD_API_KEY`, `action`, `params`.
-
-Implements caching: firms and accounts stored in `dilovod_catalog_cache` with 24h TTL.
+### Return Chain  
+**Current code (lines 250-262):** Creates ReturnFromBuyer.
+**Issue:** Per your instructions (1.6), the return is created "на підставі" a Shipment (Відвантаження). Our code takes `originalShipmentId` from the draft, which is correct in principle, but there's no UI flow to search/select an existing shipment.
 
 ---
 
-## Phase 2: AI Extraction Edge Function
+## Critical Errors from a Financial Perspective
 
-### Edge Function: `dilovod-extract`
+### 1. Incomplete Commission Chain = Accounting Gap
+Missing "Звіт комісіонера" means commission revenue is never formally recognized. In Ukrainian accounting, without the commission report, the transfer to consignee has no closing document. The goods sit in transit limbo -- they're shipped but revenue isn't recorded. **This breaks the P&L.**
 
-Uses Lovable AI gateway (`google/gemini-2.5-flash`) with tool calling to extract structured data from uploaded documents.
+### 2. No Supplier Orders = Broken Procurement Audit Trail
+Skipping "Замовлення постачальникам" means goods receipts have no basis document. In a tax audit, the inspector will ask "where is the order?" The goods receipt needs to reference it via `basisDocument`. Without it, the chain is broken and the receipt looks like it appeared from nowhere.
 
-**Input:** file content (text/parsed) + action_type
-**Output:** Draft JSON matching the CTO's schema (counterparty, items, date, total_sum, confidence scores, flags)
+### 3. Unverified API Field Names = Risk of Invalid Documents
+`operationType: "transferToConsignee"` and `basisDocument` are guesses. If the actual Dilovod field is different, we create standard shipments instead of commission transfers. The accounting consequence: goods are recorded as SOLD (revenue + cost of goods sold) instead of TRANSFERRED ON COMMISSION (no revenue yet, goods remain on your balance sheet under account 28). **This misreports revenue and inventory.**
 
-Tool definitions for structured output (one per action type):
-- `extract_commission_sale` -- counterparty, date, items[], total_sum, confidence{}
-- `extract_end_consumer_sale` -- same structure
-- `extract_purchase` -- supplier, date, invoice_number, items[] with account mapping (20/26/96), total_sum
-- `extract_return` -- original_shipment_id, counterparty, items[] with return_qty
+### 4. No Account Validation in Chain Creation
+The proxy's `createChain` doesn't pass `account` for commission items. Commission goods should stay on account 28 (goods on commission) until the commission report. Our code doesn't enforce this.
 
-**Validation layer** (runs after extraction):
-- Sum consistency: sum(qty * price) == total_sum (tolerance 0.01 UAH)
-- Date format validation
-- Required fields present
-- Confidence < 0.7 -> field added to flags[]
-- Items qty > 0
+### 5. Missing Production = Account 26 Gap
+Production items (рахунок 26) can't flow through the system. If someone creates a goods receipt for production inputs, there's no way to then create a production order that consumes those inputs and outputs finished goods.
 
-**Account mapping rules** (hardcoded, not AI-decided):
-- Товари -> рахунок 20
-- Продукція -> рахунок 26
-- Послуги -> рахунок 96
+### 6. No `saveType` Verification
+We use `saveType: "new"` everywhere. But for the "створити на підставі" pattern, Dilovod might require a different save mechanism. Some ERPs use the basis document to auto-populate fields -- if we pass raw fields instead, we might miss required auto-calculated values (taxes, discounts, warehouse assignments).
 
 ---
 
-## Phase 3: Matching Engine + Document Chain Logic
+## Recommended Fixes (Priority Order)
 
-### Counterparty matching (in `dilovod-proxy`):
+### P0 -- Must fix before any real use
 
-1. Normalize input (strip ТОВ/ФОП, normalize whitespace)
-2. Exact match by ЄДРПОУ/ІПН (if available)
-3. Exact match by name
-4. Fuzzy match (LIKE `%query%`) -- return top candidates with scores
-5. If 1 match > 0.85 score -> auto-select
-6. If 2-5 candidates 0.60-0.85 -> return for user disambiguation
-7. If 0 matches -> offer "Create new" (only if name + at least one identifier)
+1. **API Spike: Verify field names.** Call `getMetadata` for `documents.shipments` to find the exact field for commission transfer type and basis document linking. Without this, nothing else matters.
 
-Same logic for item matching (by SKU -> by name -> fuzzy).
+2. **Add "Звіт комісіонера" to commission chain.** Make it step 4: after creating the shipment (Transfer to Consignee), create `documents.commissionReport` based on that shipment. Update `chainLabels` in DraftCard to show 4 steps.
 
-### Document chains (in `dilovod-proxy`, action `createChain`):
+3. **Add supplier orders to purchase flow.** Two paths:
+   - Path A: SupplierOrder → GoodsReceipt (linked via basisDocument)  
+   - Path B: GoodsReceipt standalone (no basis)
+   - UI should ask which path. Add `purchase.order` action type or a toggle.
 
-| Action Type | Chain |
-|---|---|
-| sales.commission | SalesOrder -> CustomerInvoice -> Shipment (type: Передача комісіонеру) |
-| sales.end_consumer | SalesOrder -> Shipment |
-| sales.return | ReturnFromBuyer (linked to existing shipment via basisDocument) |
-| purchase.goods | GoodsReceipt (account 20) |
-| purchase.services | GoodsReceipt (account 96) |
+### P1 -- Important for correctness
 
-Each document in chain links to parent via `basisDocument` field. All created IDs returned and stored.
+4. **Add production action type.** New ActionType `production.order`. Chain: check product specification → create production order → auto-fill from spec. Account 26 for all production items.
 
----
+5. **Add shipment search for returns.** UI component that searches existing shipments by counterparty/date before creating return. Currently the user has no way to find the shipment ID.
 
-## Phase 4: Chat UI Page
+6. **Pass account IDs in commission chain.** Commission goods should reference account 28, not default.
 
-### New route: `/dilovod`
+### P2 -- Hardening
 
-Add to `src/App.tsx` router and `AdminLayout` sidebar nav (new icon: `MessageSquare`).
+7. **Add rollback on chain failure.** If step 2 of a 4-step chain fails, step 1 is orphaned in Dilovod. Should `setDelMark` on created documents if a later step fails.
 
-### Components to create:
-
-- `src/pages/Dilovod.tsx` -- main page with chat layout
-- `src/components/dilovod/ChatThread.tsx` -- message list (user messages, AI responses, draft cards, confirmations)
-- `src/components/dilovod/ActionTags.tsx` -- 5 action buttons grouped under "Продажі" and "Закупівлі"
-- `src/components/dilovod/FileUpload.tsx` -- drag-drop + button, accepts PDF/PNG/JPEG/XLS/CSV/DOCX
-- `src/components/dilovod/DraftCard.tsx` -- editable table showing extracted data, counterparty, items, flags (yellow highlight for confidence < 0.7), Approve/Edit/Reject buttons
-- `src/components/dilovod/DisambiguationCard.tsx` -- shows 3-5 counterparty/item candidates with "Select" buttons + "Create new" option
-- `src/components/dilovod/ConfirmationMessage.tsx` -- shows created Dilovod document IDs after successful write
-
-### Flow:
-1. User uploads file + selects action tag (or AI auto-detects)
-2. System calls `dilovod-extract` -> returns draft
-3. Draft card rendered in chat with editable fields
-4. Flagged fields (confidence < 0.7) highlighted with warning icon
-5. If counterparty/item ambiguous -> disambiguation card shown
-6. User clicks "Підтвердити" -> system validates, calls `dilovod-proxy` createChain -> returns IDs
-7. Confirmation message with Dilovod document IDs
-8. Audit log entry written automatically
+8. **Add sequential write queue.** Dilovod API is single-threaded per key. Concurrent requests can cause data corruption.
 
 ---
 
-## Phase 5: Storage Bucket + File Handling
+## Implementation Plan
 
-Create `dilovod-uploads` storage bucket (private) for uploaded source documents. Files referenced in audit log for traceability.
+### Step 1: API Discovery (edge function changes)
+- Add `getMetadata` calls for `documents.shipments`, `documents.commissionReport`, `documents.supplierOrders` to discover exact field names
+- Test with real data, log responses, update field names in proxy
 
----
+### Step 2: Fix Commission Chain
+- Add step 4 (commissionReport) to `createChain` for `sales.commission`
+- Update `chainLabels` in DraftCard: `["Замовлення", "Рахунок", "Передача комісіонеру", "Звіт комісіонера"]`
+- Update `ConfirmationMessage` to show `commission_report_id`
 
-## Phase 6: Approve -> Write Flow
+### Step 3: Add Supplier Orders
+- Add `createSupplierOrder` action in proxy
+- Update `purchase.goods` chain: optionally create SupplierOrder first, then GoodsReceipt linked to it
+- Add ActionType `purchase.order` or add a toggle in UI for "з замовленням / без замовлення"
 
-### Edge Function: `dilovod-chat` (orchestrator)
+### Step 4: Add Production Support
+- Add ActionType `production.order` 
+- Add production chain logic in proxy
+- Add spec checking (read product, verify specification tab populated)
+- Add UI tag under new "Виробництво" group
 
-Handles the full lifecycle:
-1. Receive file + action_type
-2. Call `dilovod-extract` for AI extraction
-3. Call `dilovod-proxy` for counterparty/item matching
-4. Store draft in `dilovod_drafts`
-5. On approve: re-validate draft, call `dilovod-proxy` createChain, update draft with dilovod_ids, write audit_log
-6. On reject: update draft status, write audit_log
+### Step 5: Add Shipment Search for Returns
+- New proxy action `searchShipments(counterpartyId, dateFrom, dateTo)`
+- UI component in chat to search and select existing shipment before creating return
 
-**Idempotency:** check if draft already has dilovod_ids before writing (prevent double-submit).
-
----
-
-## Files to Create/Modify
-
-| File | Action |
-|---|---|
-| Migration SQL | Create 5 new tables + RLS + indexes |
-| `supabase/functions/dilovod-proxy/index.ts` | Dilovod API wrapper |
-| `supabase/functions/dilovod-extract/index.ts` | AI extraction via Lovable AI |
-| `supabase/functions/dilovod-chat/index.ts` | Chat orchestration |
-| `src/pages/Dilovod.tsx` | Chat page |
-| `src/components/dilovod/ChatThread.tsx` | Message display |
-| `src/components/dilovod/ActionTags.tsx` | 5 action buttons |
-| `src/components/dilovod/DraftCard.tsx` | Editable draft card |
-| `src/components/dilovod/DisambiguationCard.tsx` | Entity matching UI |
-| `src/components/dilovod/FileUpload.tsx` | File upload |
-| `src/components/dilovod/ConfirmationMessage.tsx` | Post-write confirmation |
-| `src/components/AdminLayout.tsx` | Add "Діловод" nav item |
-| `src/App.tsx` | Add `/dilovod` route |
-
----
-
-## Blocker
-
-**DILOVOD_API_KEY must be provided before implementation begins.** I will request this secret as the first step when you approve this plan.
+### Step 6: Chain Rollback
+- Wrap chain creation in try/catch per step
+- On failure, `setDelMark` on all previously created documents in that chain
+- Return partial result with error details
 
