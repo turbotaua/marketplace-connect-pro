@@ -6,6 +6,7 @@ import { FileUpload } from "@/components/dilovod/FileUpload";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Send, Sparkles } from "lucide-react";
+import { useChatSessions } from "@/hooks/useChatSessions";
 
 export interface ChatMessage {
   id: string;
@@ -49,7 +50,16 @@ export function getActionLabel(action: ActionType): string {
 }
 
 const Dilovod = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const {
+    sessions,
+    currentSessionId,
+    messages,
+    loadingMessages,
+    loadSession,
+    startNewChat,
+    saveMessage,
+  } = useChatSessions();
+
   const [input, setInput] = useState("");
   const [selectedAction, setSelectedAction] = useState<ActionType | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -65,30 +75,25 @@ const Dilovod = () => {
     return "Доброго вечора";
   };
 
-  const addMessage = (msg: Omit<ChatMessage, "id" | "created_at">) => {
-    setMessages((prev) => [
-      ...prev,
-      { ...msg, id: crypto.randomUUID(), created_at: new Date().toISOString() },
-    ]);
-  };
-
-  const handleSend = () => {
+  const handleSend = async () => {
     const text = input.trim();
     if (!text && !uploadedFile) return;
 
-    addMessage({
+    setInput("");
+    const file = uploadedFile;
+    setUploadedFile(null);
+
+    await saveMessage({
       role: "user",
-      content: text || (uploadedFile ? `📎 ${uploadedFile.name}` : ""),
-      metadata: uploadedFile
-        ? { fileName: uploadedFile.name, actionType: selectedAction || undefined }
+      content: text || (file ? `📎 ${file.name}` : ""),
+      metadata: file
+        ? { fileName: file.name, actionType: selectedAction || undefined }
         : undefined,
     });
 
-    setInput("");
-    setUploadedFile(null);
-
-    setTimeout(() => {
-      addMessage({
+    // Simulated assistant response
+    setTimeout(async () => {
+      await saveMessage({
         role: "assistant",
         content: selectedAction
           ? `Обробляю документ як **${getActionLabel(selectedAction)}**... (підключення до backend буде у наступних фазах)`
@@ -97,15 +102,15 @@ const Dilovod = () => {
     }, 500);
   };
 
-  const handleFileSelect = (file: File) => {
+  const handleFileSelect = async (file: File) => {
     setUploadedFile(file);
-    addMessage({
+    await saveMessage({
       role: "user",
       content: `📎 Завантажено: ${file.name}`,
       metadata: { fileName: file.name },
     });
     if (!selectedAction) {
-      addMessage({
+      await saveMessage({
         role: "assistant",
         content: "Файл отримано. Оберіть тип операції:",
         metadata: { type: "text" },
@@ -128,9 +133,18 @@ const Dilovod = () => {
   }, [input]);
 
   return (
-    <AdminLayout>
+    <AdminLayout
+      chatSessions={sessions}
+      currentSessionId={currentSessionId}
+      onSelectSession={loadSession}
+      onNewChat={startNewChat}
+    >
       <div className="flex flex-col h-[calc(100vh)] max-w-3xl mx-auto w-full">
-        {!hasMessages ? (
+        {loadingMessages ? (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-muted-foreground text-sm">Завантаження...</p>
+          </div>
+        ) : !hasMessages ? (
           <div className="flex-1 flex flex-col items-center justify-center px-4">
             <div className="flex flex-col items-center gap-2 mb-10">
               <div className="flex items-center gap-3">
