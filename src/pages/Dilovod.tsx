@@ -169,9 +169,14 @@ const Dilovod = () => {
         return;
       }
 
+      const dilovodIds = result.result?.chainIds || result.result || {};
+      if (Object.keys(dilovodIds).length === 0) {
+        toast.error("Документи не були створені. Перевірте тип операції та дані.");
+        return;
+      }
+
       // Show confirmation message
       const sessionId = await ensureSessionId();
-      const dilovodIds = result.result?.chainIds || result.result || {};
       await saveMessage(
         {
           role: "assistant",
