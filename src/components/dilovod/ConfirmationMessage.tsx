@@ -9,6 +9,7 @@ const idLabels: Record<string, string> = {
   order_id: "Замовлення покупця",
   invoice_id: "Рахунок покупцеві",
   transfer_id: "Передача комісіонеру",
+  expense_invoice_id: "Видаткова накладна",
   commission_report_id: "Звіт комісіонера",
   shipment_id: "Відвантаження",
   return_id: "Повернення від покупця",

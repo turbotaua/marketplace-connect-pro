@@ -1,7 +1,7 @@
 import type { ActionType } from "@/pages/Dilovod";
 import { cn } from "@/lib/utils";
 import {
-  ShoppingCart, Users, RotateCcw, Package, Wrench, Factory,
+  ShoppingCart, RotateCcw, Wrench, Factory,
   ClipboardList, FileText, Truck, ArrowDownToLine
 } from "lucide-react";
 
@@ -23,7 +23,7 @@ const groups: { title: string; actions: ActionDef[] }[] = [
     title: "Продажі",
     actions: [
       { type: "sales.order", label: "Замовлення покупцю", desc: "Створює: Замовлення + Рахунок", icon: ClipboardList },
-      { type: "sales.commission", label: "Передача комісіонеру", desc: "На підставі замовлення → Передача", icon: Truck },
+      { type: "sales.commission", label: "Комісія (повний ланцюжок)", desc: "Замовлення → Рахунок → Передача → Видаткова", icon: Truck },
       { type: "sales.report", label: "Звіт комісіонера", desc: "На підставі передачі → Звіт про продажі", icon: FileText },
       { type: "sales.shipment", label: "Відвантаження споживачу", desc: "На підставі замовлення → Відвантаження", icon: ShoppingCart },
       { type: "sales.return", label: "Повернення від покупця", desc: "На підставі відвантаження", icon: RotateCcw },
@@ -32,8 +32,7 @@ const groups: { title: string; actions: ActionDef[] }[] = [
   {
     title: "Закупівлі",
     actions: [
-      { type: "purchase.order", label: "Замовлення постачальнику", desc: "Створює замовлення", icon: ClipboardList },
-      { type: "purchase.receipt", label: "Надходження товарів/послуг", desc: "На підставі замовлення або без", icon: ArrowDownToLine },
+      { type: "purchase.receipt", label: "Надходження товарів/послуг", desc: "Замовлення + Надходження (або тільки надходження)", icon: ArrowDownToLine },
     ],
   },
   {
@@ -46,7 +45,6 @@ const groups: { title: string; actions: ActionDef[] }[] = [
 
 export const ActionTags = ({ selected, onSelect, compact }: ActionTagsProps) => {
   if (compact) {
-    // Compact mode: flat pill buttons for chat header
     const allActions = groups.flatMap((g) => g.actions);
     return (
       <div className="flex flex-wrap gap-1.5">
@@ -69,7 +67,6 @@ export const ActionTags = ({ selected, onSelect, compact }: ActionTagsProps) => 
     );
   }
 
-  // Full mode: grouped cards with descriptions
   return (
     <div className="space-y-4">
       {groups.map((group) => (

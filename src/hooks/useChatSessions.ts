@@ -149,6 +149,7 @@ export function useChatSessions() {
     sessions,
     currentSessionId,
     messages,
+    setMessages,
     loadingMessages,
     loadSession,
     startNewChat,

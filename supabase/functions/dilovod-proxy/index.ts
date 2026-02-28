@@ -297,16 +297,16 @@ serve(async (req) => {
             });
             chainIds.transfer_id = extractId(transfer);
 
-            // Step 4: Commission Report (documents.sale, docMode=comReport)
-            const comReport = await callDilovod(apiKey, "saveObject", {
+            // Step 4: Expense Invoice / Видаткова накладна (documents.sale, docMode=goods)
+            const expenseInvoice = await callDilovod(apiKey, "saveObject", {
               saveType: 1,
               header: {
                 id: "documents.sale",
                 firm: draft.firmId,
                 person: draft.counterpartyId,
                 date: draft.date,
-                baseDoc: chainIds.transfer_id,
-                docMode: DOC_MODE.comReport,
+                baseDoc: chainIds.order_id,
+                docMode: DOC_MODE.goods,
               },
               tableParts: {
                 tpGoods: draft.items.map((i: any, idx: number) => ({
@@ -315,12 +315,10 @@ serve(async (req) => {
                   qty: i.qty,
                   price: i.price,
                   amountCur: i.total || i.qty * i.price,
-                  comPrice: i.comPrice || i.price,
-                  comAmount: i.comAmount || (i.total || i.qty * i.price),
                 })),
               },
             });
-            chainIds.commission_report_id = extractId(comReport);
+            chainIds.expense_invoice_id = extractId(expenseInvoice);
 
           } else if (actionType === "sales.end_consumer") {
             // Step 1: Sales Order
@@ -380,7 +378,7 @@ serve(async (req) => {
             });
             chainIds.return_id = extractId(ret);
 
-          } else if (actionType === "purchase.goods" || actionType === "purchase.services") {
+          } else if (actionType === "purchase.receipt" || actionType === "purchase.goods" || actionType === "purchase.services") {
             // Optional Step 1: Supplier Order (documents.purchaseOrder)
             if (draft.createSupplierOrder) {
               const supplierOrder = await callDilovod(apiKey, "saveObject", {
