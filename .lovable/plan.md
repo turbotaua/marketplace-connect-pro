@@ -1,42 +1,64 @@
 
+QA покриття (виконано)
+- ✅ Авторизація/guard сторінок
+- ✅ Chat send + streaming + resolve draft + disambiguation
+- ✅ Sidebar сесій (створення/перезавантаження/історія)
+- ✅ Запити до backend functions (chat/proxy)
+- ✅ /marketplaces overview
+- ⚠️ Не покрито e2e: реальне створення документів (кнопки підтвердження відсутні в UI)
 
-## Fix: Smart Search Normalization + Timeout Tuning
+Знайдені проблеми (що не працює / погано / незручно)
 
-### Root cause (confirmed by direct proxy test)
-- `POST /dilovod-proxy {"action":"searchItem","params":{"query":"каштан"}}` returns 10 results in ~3s
-- But draftResolver sends `"query":"Свічка Київські Каштани"` — too specific, and the 10s client timeout kills the request before Dilovod responds
+P0
+1) Довгі запити закінчуються "Час очікування відповіді вичерпано (30с)" і користувач залишається без нормального recovery-flow.
+2) У payload на /dilovod-chat дублюється останнє user-повідомлення (в одному запиті воно передається двічі).
 
-### Changes
+P1
+3) Історія сесій засмічується дублями однакових запитів; є "биті" сесії з 1 user без assistant.
+4) Пошук контрагента часто повертає 0 (напр. "Тест Тестинг"), через це постійний manual disambiguation.
+5) AI стабільно генерує застарілу дату `2024-05-22` у draft.
+6) У консолі масові React warning `Function components cannot be given refs` (ActionTags, ChatThread/Markdown, FileUpload + інші), шумить дебаг і ускладнює діагностику.
 
-**1. `src/lib/draftResolver.ts` — Smart query normalization + multi-strategy search**
+P2
+7) Невідповідність actionType: UI використовує `sales.shipment`, а backend chain-гілка очікує `sales.end_consumer`.
+8) У draft-flow немає явного "Підтвердити/Створити документи" e2e кроку (UX-розрив: чернетка є, виконання немає).
+9) Sidebar показує багато однотипних назв; немає дедуплікації/групування схожих запитів.
 
-- Add `normalizeSearchQuery(query, type)`:
-  - Strip product-type prefixes: "свічка", "дифузор", "аромаспрей", "набір" etc.
-  - Strip quotes `«»""''`
-  - Trim, lowercase
-  - For items: extract the distinctive name part ("Київські Каштани")
-  
-- Replace single `searchCatalog()` call with `smartSearch()`:
-  - Strategy 1: search with normalized full name ("київські каштани")
-  - Strategy 2 (if 0 results): search with shortest distinctive word ("каштан") 
-  - Merge and deduplicate results
+План виправлень (коротко, по кроках)
 
-- Increase `callProxy` timeout from 10s → 20s (Dilovod API is genuinely slow)
-- Increase overall `resolveDraft` race timeout in Dilovod.tsx from 15s → 25s
+1) Стабілізувати send-flow у `src/pages/Dilovod.tsx`
+- Будувати `historyForAI` з snapshot до `saveMessage(user)` або не додавати вручну user, якщо він уже в state.
+- Додати idempotency guard на рівні контент+timestamp (debounce 500–800ms).
+- На timeout зберігати assistant error-message у чаті (не тільки toast), щоб стан був прозорий.
 
-**2. `src/pages/Dilovod.tsx` — Increase resolution timeout**
+2) Посилити стрім у `src/lib/streamChat.ts`
+- Розділити таймаути: connect timeout, first-byte timeout, full-stream timeout.
+- Додати retry (1 раз) для transient timeout/abort.
+- Передавати user access token (якщо є сесія), а не тільки publishable key.
 
-- Change `Promise.race` timeout from 15000 → 25000ms
+3) Нормалізація та fallback для контрагентів у `src/lib/draftResolver.ts`
+- Для counterparty: normalize + contains + токенний fallback (аналог item smartSearch).
+- Кешувати останні вибори disambiguation локально для авто-підстановки в наступних схожих запитах.
 
-**3. Scoring improvements in `draftResolver.ts`**
+4) Виправити mapping actionType
+- Уніфікувати `sales.shipment` ↔ `sales.end_consumer` в одному контракті (UI, resolver, backend proxy, prompt).
 
-- Normalize both query and candidate before comparison (strip type prefixes from candidate names too)
-- Auto-resolve threshold: if top candidate score ≥ 0.85 (keep existing) but also auto-resolve if only 1 candidate even at lower score (≥ 0.7)
+5) Прибрати ref-warning шум
+- Перевірити компоненти, які отримують `ref` непрямо (ActionTags, ChatThread/ReactMarkdown, FileUpload, Toaster wrappers).
+- Де потрібно — `forwardRef`, де не потрібно — прибрати прокидання ref.
 
-### Files
+6) Очистити UX історії сесій у `src/hooks/useChatSessions.ts`
+- Дедуп identical user messages (hash content + коротке вікно часу).
+- Приховати/позначити orphan-сесії (user-only після timeout).
+- Додати кнопку "Очистити дублікати" у sidebar.
 
-| File | Change |
-|---|---|
-| `src/lib/draftResolver.ts` | Add `normalizeSearchQuery`, multi-strategy search, 20s timeout |
-| `src/pages/Dilovod.tsx` | Increase resolution timeout to 25s |
+7) Поставити e2e execution крок
+- Додати на DraftCard кнопку "Підтвердити" і виклик createChain.
+- Після виконання показувати confirmation message з IDs документів.
 
+8) Обов’язковий регресійний QA після фіксів
+- send 10 разів підряд: без дублювань у payload/DB.
+- сценарій повільного AI: немає "вічного" зависання, є зрозумілий fallback.
+- item + counterparty resolve: авто-матч/дизамбіг працюють стабільно.
+- refresh сторінки: сесія та історія консистентні.
+- перевірити flow end-to-end вручну: від вводу запиту до створення документів.
