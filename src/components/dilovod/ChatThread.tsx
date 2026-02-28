@@ -19,9 +19,10 @@ interface ChatThreadProps {
     selectedName: string
   ) => void;
   onDraftApprove?: (draft: DraftData) => void;
+  onRetrySearch?: (msgId: string, field: "counterparty" | "item", extractedName: string) => void;
 }
 
-export function ChatThread({ messages, isStreaming, onDisambiguationSelect, onDraftApprove }: ChatThreadProps) {
+export function ChatThread({ messages, isStreaming, onDisambiguationSelect, onDraftApprove, onRetrySearch }: ChatThreadProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -29,7 +30,6 @@ export function ChatThread({ messages, isStreaming, onDisambiguationSelect, onDr
   }, [messages]);
 
   const renderMessageContent = (msg: ChatMessage) => {
-    // Error message
     if (msg.metadata?.type === "error") {
       return (
         <div className="flex items-center gap-2 text-sm text-destructive">
@@ -39,7 +39,6 @@ export function ChatThread({ messages, isStreaming, onDisambiguationSelect, onDr
       );
     }
 
-    // Resolving state — searching catalog
     if (msg.metadata?.type === "resolving") {
       return (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -49,7 +48,6 @@ export function ChatThread({ messages, isStreaming, onDisambiguationSelect, onDr
       );
     }
 
-    // Draft fully resolved — show DraftCard with approve button
     if (msg.metadata?.type === "draft" && msg.metadata.draft) {
       return (
         <DraftCard
@@ -59,7 +57,6 @@ export function ChatThread({ messages, isStreaming, onDisambiguationSelect, onDr
       );
     }
 
-    // Disambiguation needed — show draft + disambiguation cards
     if (msg.metadata?.type === "disambiguation" && msg.metadata.draft) {
       const disambiguations: Disambiguation[] = msg.metadata.disambiguations || [];
       return (
@@ -71,32 +68,30 @@ export function ChatThread({ messages, isStreaming, onDisambiguationSelect, onDr
               title={d.field === "counterparty" ? "Контрагент" : `Товар: рядок ${(d.index ?? 0) + 1}`}
               extractedName={d.extractedName}
               candidates={d.candidates}
+              timedOut={d.timedOut}
               onSelect={(id) => {
                 const selected = d.candidates.find((c) => c.id === id);
                 if (selected && onDisambiguationSelect) {
                   onDisambiguationSelect(msg.id, d.field, d.index, selected.id, selected.name);
                 }
               }}
-              onCreateNew={() => {
-                if (onDisambiguationSelect) {
-                  onDisambiguationSelect(msg.id, d.field, d.index, "__new__", d.extractedName);
-                }
-              }}
+              onRetrySearch={
+                d.candidates.length === 0 && onRetrySearch
+                  ? () => onRetrySearch(msg.id, d.field, d.extractedName)
+                  : undefined
+              }
             />
           ))}
         </div>
       );
     }
 
-    // Confirmation
     if (msg.metadata?.type === "confirmation" && msg.metadata.dilovodIds) {
       return <ConfirmationMessage ids={msg.metadata.dilovodIds} actionType={msg.metadata.actionType} />;
     }
 
-    // Plain text / markdown — strip out raw JSON draft blocks for cleaner display
     let displayContent = msg.content;
     if (msg.metadata?.draft) {
-      // Remove the JSON block from display since we show DraftCard
       displayContent = displayContent.replace(/```(?:json)?\s*\n?\{[\s\S]*?"type"\s*:\s*"draft"[\s\S]*?\}\s*```/g, "").trim();
     }
 

@@ -1,8 +1,9 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search } from "lucide-react";
+import { Search, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 interface Candidate {
   id: string;
@@ -16,7 +17,8 @@ interface DisambiguationCardProps {
   extractedName: string;
   candidates: Candidate[];
   onSelect: (id: string) => void;
-  onCreateNew?: () => void;
+  onRetrySearch?: () => void;
+  timedOut?: boolean;
 }
 
 export const DisambiguationCard = ({
@@ -24,9 +26,41 @@ export const DisambiguationCard = ({
   extractedName,
   candidates,
   onSelect,
-  onCreateNew,
+  onRetrySearch,
+  timedOut,
 }: DisambiguationCardProps) => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  // No candidates — timeout or empty result
+  if (candidates.length === 0) {
+    return (
+      <Card className="w-full max-w-sm border-border/60 shadow-sm">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium text-foreground">{title}</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {timedOut
+              ? <>Пошук «<span className="font-medium text-foreground">{extractedName}</span>» не встиг завершитися</>
+              : <>Не знайдено результатів для «<span className="font-medium text-foreground">{extractedName}</span>»</>
+            }
+          </p>
+          {onRetrySearch && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRetrySearch}
+              className="w-full gap-2 text-xs"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Повторити пошук
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="w-full max-w-sm border-border/60 shadow-sm">
@@ -85,16 +119,6 @@ export const DisambiguationCard = ({
             );
           })}
         </div>
-
-        {onCreateNew && (
-          <button
-            onClick={onCreateNew}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors pt-1"
-          >
-            <Plus className="h-3 w-3" />
-            <span>Створити нового</span>
-          </button>
-        )}
       </CardContent>
     </Card>
   );

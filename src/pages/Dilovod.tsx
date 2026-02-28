@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Send, Sparkles } from "lucide-react";
 import { useChatSessions } from "@/hooks/useChatSessions";
 import { streamChat } from "@/lib/streamChat";
-import { parseDraftFromText, resolveDraft, type DraftData, type Disambiguation } from "@/lib/draftResolver";
+import { parseDraftFromText, resolveDraft, retryResolveCounterparty, type DraftData, type Disambiguation } from "@/lib/draftResolver";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -122,6 +122,53 @@ const Dilovod = () => {
     },
     [setMessages]
   );
+
+  // Handle retry search for timed-out counterparty
+  const handleRetrySearch = useCallback(async (msgId: string, field: "counterparty" | "item", extractedName: string) => {
+    if (field !== "counterparty") return; // only counterparty retry supported for now
+
+    // Show resolving state on the disambiguation card
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== msgId) return msg;
+        const disambiguations = (msg.metadata?.disambiguations || []).map((d) =>
+          d.field === "counterparty" ? { ...d, timedOut: false, candidates: [] } : d
+        );
+        return { ...msg, metadata: { ...msg.metadata, disambiguations } };
+      })
+    );
+
+    const result = await retryResolveCounterparty(extractedName);
+
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== msgId || !msg.metadata?.draft) return msg;
+        const draft = JSON.parse(JSON.stringify(msg.metadata.draft)) as DraftData;
+
+        if (result.dilovod_id) {
+          draft.counterparty.dilovod_id = result.dilovod_id;
+          draft.counterparty.dilovod_name = result.dilovod_name;
+          draft.counterparty.flagged = false;
+          const remainingDisamb = (msg.metadata.disambiguations || []).filter((d) => d.field !== "counterparty");
+          return {
+            ...msg,
+            metadata: {
+              ...msg.metadata,
+              type: remainingDisamb.length === 0 ? "draft" as const : "disambiguation" as const,
+              draft,
+              disambiguations: remainingDisamb.length === 0 ? undefined : remainingDisamb,
+            },
+          };
+        } else {
+          // Still no results or disambiguation needed
+          const updatedDisamb = (msg.metadata.disambiguations || []).map((d) =>
+            d.field === "counterparty" && result.disambiguation ? result.disambiguation : d
+          );
+          return { ...msg, metadata: { ...msg.metadata, disambiguations: updatedDisamb } };
+        }
+      })
+    );
+  }, [setMessages]);
 
   // Handle draft approval — call createChain via proxy
   const handleDraftApprove = useCallback(async (draft: DraftData) => {
@@ -298,7 +345,32 @@ const Dilovod = () => {
             );
 
             // resolveDraft never throws — always returns partial results
-            const { draft, disambiguations, isFullyResolved } = await resolveDraft(parsedDraft);
+            let { draft, disambiguations, isFullyResolved } = await resolveDraft(parsedDraft);
+
+            // Auto-retry once if counterparty timed out (empty candidates)
+            const cpTimedOut = disambiguations.find((d) => d.field === "counterparty" && d.timedOut);
+            if (cpTimedOut) {
+              console.log("[Dilovod] Counterparty timed out, auto-retrying...");
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === savedMsg.id
+                    ? { ...m, metadata: { type: "resolving" as const, resolvingStatus: "🔄 Повторний пошук контрагента..." } }
+                    : m
+                )
+              );
+              const retry = await retryResolveCounterparty(draft.counterparty.extracted_name);
+              if (retry.dilovod_id) {
+                draft.counterparty.dilovod_id = retry.dilovod_id;
+                draft.counterparty.dilovod_name = retry.dilovod_name;
+                draft.counterparty.flagged = false;
+                disambiguations = disambiguations.filter((d) => d.field !== "counterparty");
+                isFullyResolved = disambiguations.length === 0;
+              } else if (retry.disambiguation) {
+                disambiguations = disambiguations.map((d) =>
+                  d.field === "counterparty" ? retry.disambiguation! : d
+                );
+              }
+            }
 
             // Always show the draft — flagged fields show "needs selection"
             setMessages((prev) =>
@@ -440,6 +512,7 @@ const Dilovod = () => {
                 isStreaming={isProcessing}
                 onDisambiguationSelect={handleDisambiguationSelect}
                 onDraftApprove={handleDraftApprove}
+                onRetrySearch={handleRetrySearch}
               />
             </div>
 
