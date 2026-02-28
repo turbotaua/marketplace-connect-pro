@@ -1,11 +1,11 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import AdminLayout from "@/components/AdminLayout";
 import { ChatThread } from "@/components/dilovod/ChatThread";
 import { ActionTags } from "@/components/dilovod/ActionTags";
 import { FileUpload } from "@/components/dilovod/FileUpload";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Send } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Send, Plus, Sparkles } from "lucide-react";
 
 export interface ChatMessage {
   id: string;
@@ -29,32 +29,30 @@ export type ActionType =
   | "sales.return"
   | "purchase.goods"
   | "purchase.services"
+  | "purchase.order"
   | "production.order";
 
 const Dilovod = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content:
-        "Вітаю! Я AI-асистент для роботи з Діловодом. Завантажте документ і оберіть тип операції, щоб розпочати.",
-      created_at: new Date().toISOString(),
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [selectedAction, setSelectedAction] = useState<ActionType | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const hasMessages = messages.length > 0;
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Доброго ранку";
+    if (hour < 18) return "Доброго дня";
+    return "Доброго вечора";
+  };
 
   const addMessage = (msg: Omit<ChatMessage, "id" | "created_at">) => {
     setMessages((prev) => [
       ...prev,
-      {
-        ...msg,
-        id: crypto.randomUUID(),
-        created_at: new Date().toISOString(),
-      },
+      { ...msg, id: crypto.randomUUID(), created_at: new Date().toISOString() },
     ]);
   };
 
@@ -73,7 +71,6 @@ const Dilovod = () => {
     setInput("");
     setUploadedFile(null);
 
-    // TODO: connect to dilovod-chat edge function
     setTimeout(() => {
       addMessage({
         role: "assistant",
@@ -107,52 +104,103 @@ const Dilovod = () => {
     }
   };
 
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + "px";
+    }
+  }, [input]);
+
   return (
     <AdminLayout>
-      <div className="flex flex-col h-[calc(100vh-3rem)] max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-border">
-          <div>
-            <h1 className="text-xl font-bold text-foreground">Діловод AI</h1>
-            <p className="text-sm text-muted-foreground">
-              AI-асистент для створення документів
-            </p>
+      <div className="flex flex-col h-[calc(100vh)] max-w-3xl mx-auto w-full">
+        {!hasMessages ? (
+          /* Empty state — Claude-like greeting */
+          <div className="flex-1 flex flex-col items-center justify-center px-4">
+            <div className="flex items-center gap-3 mb-10">
+              <Sparkles className="h-8 w-8 text-primary" />
+              <h1 className="text-4xl md:text-5xl font-normal text-foreground"
+                  style={{ fontFamily: "'Instrument Serif', Georgia, serif" }}>
+                {getGreeting()}, Turbota
+              </h1>
+            </div>
+
+            {/* Input box */}
+            <div className="w-full max-w-2xl">
+              <div className="bg-card rounded-2xl border border-border shadow-sm p-4">
+                <Textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Опишіть задачу або завантажте документ..."
+                  disabled={isProcessing}
+                  className="border-0 shadow-none resize-none bg-transparent focus-visible:ring-0 text-base placeholder:text-muted-foreground/60 p-0 min-h-[44px]"
+                  rows={1}
+                />
+                <div className="flex items-center justify-between mt-3">
+                  <FileUpload onFileSelect={handleFileSelect} uploadedFile={uploadedFile} compact />
+                  <Button
+                    onClick={handleSend}
+                    disabled={isProcessing && !input.trim() && !uploadedFile}
+                    size="icon"
+                    variant="ghost"
+                    className="rounded-full h-9 w-9 text-muted-foreground hover:text-foreground"
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Action Tags below input */}
+              <div className="mt-4 flex justify-center">
+                <ActionTags selected={selectedAction} onSelect={setSelectedAction} />
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          /* Chat mode */
+          <>
+            {/* Action Tags — sticky top */}
+            <div className="border-b border-border px-4 py-2 bg-background/80 backdrop-blur-sm">
+              <ActionTags selected={selectedAction} onSelect={setSelectedAction} compact />
+            </div>
 
-        {/* Action Tags */}
-        <ActionTags
-          selected={selectedAction}
-          onSelect={setSelectedAction}
-        />
+            {/* Messages */}
+            <div className="flex-1 overflow-hidden">
+              <ChatThread messages={messages} />
+            </div>
 
-        {/* Chat Thread */}
-        <div className="flex-1 overflow-hidden">
-          <ChatThread messages={messages} />
-        </div>
-
-        {/* Input Area */}
-        <div className="border-t border-border pt-3 space-y-2">
-          <FileUpload onFileSelect={handleFileSelect} uploadedFile={uploadedFile} />
-          <div className="flex gap-2">
-            <Input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Введіть повідомлення або завантажте документ..."
-              disabled={isProcessing}
-              className="flex-1"
-            />
-            <Button
-              onClick={handleSend}
-              disabled={isProcessing && !input.trim() && !uploadedFile}
-              size="icon"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+            {/* Input Area */}
+            <div className="border-t border-border p-4">
+              <div className="bg-card rounded-2xl border border-border shadow-sm p-4">
+                <Textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Введіть повідомлення..."
+                  disabled={isProcessing}
+                  className="border-0 shadow-none resize-none bg-transparent focus-visible:ring-0 text-base placeholder:text-muted-foreground/60 p-0 min-h-[44px]"
+                  rows={1}
+                />
+                <div className="flex items-center justify-between mt-3">
+                  <FileUpload onFileSelect={handleFileSelect} uploadedFile={uploadedFile} compact />
+                  <Button
+                    onClick={handleSend}
+                    disabled={isProcessing && !input.trim() && !uploadedFile}
+                    size="icon"
+                    variant="ghost"
+                    className="rounded-full h-9 w-9 text-muted-foreground hover:text-foreground"
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </AdminLayout>
   );
@@ -165,6 +213,7 @@ function getActionLabel(action: ActionType): string {
     "sales.return": "Повернення",
     "purchase.goods": "Надходження товарів",
     "purchase.services": "Надходження послуг",
+    "purchase.order": "Замовлення постачальнику",
     "production.order": "Замовлення на виробництво",
   };
   return labels[action];
