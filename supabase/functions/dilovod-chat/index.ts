@@ -48,6 +48,11 @@ const SYSTEM_PROMPT = `Ти — Dilovod AI-асистент, який допом
 - **date**: дата документа
 - **items**: список товарів з полями: назва, кількість, ціна
 
+## ВАЖЛИВО: Дата документа
+- Завжди використовуй СЬОГОДНІШНЮ дату, яка передається в контексті нижче.
+- НІКОЛИ не використовуй дату з минулого (напр. 2024-05-22).
+- Якщо користувач не вказав дату — використовуй сьогоднішню.
+
 ## Правила поведінки
 1. Відповідай українською, коротко і по справі
 2. Якщо користувач описує ситуацію — запропонуй конкретний тип операції
@@ -64,7 +69,7 @@ const SYSTEM_PROMPT = `Ти — Dilovod AI-асистент, який допом
   "type": "draft",
   "actionType": "sales.commission",
   "counterparty": { "extracted_name": "ТОВ Магазин" },
-  "date": "2025-01-15",
+  "date": "YYYY-MM-DD",
   "items": [
     { "extracted_name": "Товар 1", "qty": 10, "price": 100.00, "total": 1000.00 }
   ],
@@ -84,8 +89,9 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    // Build context-aware system prompt
-    let systemContent = SYSTEM_PROMPT;
+    // Build context-aware system prompt with current date
+    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    let systemContent = SYSTEM_PROMPT + `\n\nСьогоднішня дата: **${today}**. Використовуй її як дату документа, якщо користувач не вказав іншу.`;
     if (actionType) {
       systemContent += `\n\nКористувач обрав тип операції: **${actionType}**. Зосередься на цьому типі.`;
     }
