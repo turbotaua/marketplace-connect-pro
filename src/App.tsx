@@ -7,6 +7,7 @@ import Dashboard from "./pages/Dashboard";
 import Prices from "./pages/Prices";
 import Categories from "./pages/Categories";
 import Logs from "./pages/Logs";
+import Dilovod from "./pages/Dilovod";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 
@@ -23,6 +24,7 @@ const App = () => (
           <Route path="/prices" element={<Prices />} />
           <Route path="/categories" element={<Categories />} />
           <Route path="/logs" element={<Logs />} />
+          <Route path="/dilovod" element={<Dilovod />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
