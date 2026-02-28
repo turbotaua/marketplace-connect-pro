@@ -90,12 +90,19 @@ const ITEM_TYPE_PREFIXES = [
   "формова свічка", "міні-свічка", "міні",
 ];
 
+// Counterparty suffixes to strip
+const COUNTERPARTY_SUFFIXES = [
+  "фізособа", "фіз.особа", "фізична особа", "юр.особа", "юридична особа",
+  "фоп", "тов", "ппг", "пп",
+];
+
 /**
  * Normalize a search query by stripping product-type prefixes, quotes, and extra whitespace.
  */
 function normalizeSearchQuery(query: string, type: "item" | "counterparty"): string {
   let q = query
     .replace(/['"«»„""''`]/g, "")
+    .replace(/[,;\.]+$/, "") // trailing punctuation
     .replace(/\s+/g, " ")
     .trim();
 
@@ -104,7 +111,18 @@ function normalizeSearchQuery(query: string, type: "item" | "counterparty"): str
     for (const prefix of ITEM_TYPE_PREFIXES) {
       if (lower.startsWith(prefix + " ")) {
         q = q.slice(prefix.length).trim();
-        break; // only strip one prefix
+        break;
+      }
+    }
+  }
+
+  if (type === "counterparty") {
+    // Strip type suffixes like "фізособа"
+    const lower = q.toLowerCase();
+    for (const suffix of COUNTERPARTY_SUFFIXES) {
+      if (lower.endsWith(" " + suffix) || lower.endsWith(", " + suffix)) {
+        q = q.replace(new RegExp("[,\\s]*" + suffix + "$", "i"), "").trim();
+        break;
       }
     }
   }
@@ -116,11 +134,12 @@ function normalizeSearchQuery(query: string, type: "item" | "counterparty"): str
  * Extract distinctive words (3+ chars) from a query for fallback search.
  */
 function getDistinctiveWords(query: string): string[] {
+  const stopWords = [...ITEM_TYPE_PREFIXES, ...COUNTERPARTY_SUFFIXES, "для", "від", "або", "та"];
   return query
     .toLowerCase()
     .split(/\s+/)
     .filter((w) => w.length >= 3)
-    .filter((w) => !ITEM_TYPE_PREFIXES.includes(w));
+    .filter((w) => !stopWords.includes(w));
 }
 
 async function callProxy(action: string, params: Record<string, unknown>): Promise<any> {
@@ -162,7 +181,6 @@ function normalizeForCompare(s: string): string {
 }
 
 function calculateMatchScore(query: string, candidateName: string): number {
-  // Normalize both sides — strip type prefixes from candidate too
   let q = normalizeForCompare(query);
   let c = normalizeForCompare(candidateName);
 
@@ -224,7 +242,7 @@ async function smartSearch(
   let candidates = await searchCatalogRaw(type, normalized);
 
   // Strategy 2: fallback with distinctive words
-  if (candidates.length === 0 && type === "item") {
+  if (candidates.length === 0) {
     const words = getDistinctiveWords(normalized);
     for (const word of words) {
       console.log(`[smartSearch] fallback search with word: "${word}"`);

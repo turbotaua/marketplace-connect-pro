@@ -1,3 +1,5 @@
+import { supabase } from "@/integrations/supabase/client";
+
 type Msg = { role: "user" | "assistant"; content: string };
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dilovod-chat`;
@@ -15,31 +17,48 @@ export async function streamChat({
   onDone: () => Promise<void> | void;
   onError: (error: string) => void;
 }) {
-  const controller = new AbortController();
-  const fetchTimeout = setTimeout(() => controller.abort(), 30000); // 30s total timeout
+  // Get user auth token if available
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+  const doFetch = async (attempt: number): Promise<Response> => {
+    const controller = new AbortController();
+    const fetchTimeout = setTimeout(() => controller.abort(), 45000); // 45s connect+response timeout
+
+    try {
+      const resp = await fetch(CHAT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ messages, actionType }),
+        signal: controller.signal,
+      });
+      clearTimeout(fetchTimeout);
+      return resp;
+    } catch (e: any) {
+      clearTimeout(fetchTimeout);
+      if (e.name === "AbortError" && attempt === 0) {
+        // Retry once on timeout
+        console.warn("[streamChat] Retrying after timeout...");
+        return doFetch(1);
+      }
+      throw e;
+    }
+  };
 
   let resp: Response;
   try {
-    resp = await fetch(CHAT_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-      },
-      body: JSON.stringify({ messages, actionType }),
-      signal: controller.signal,
-    });
+    resp = await doFetch(0);
   } catch (e: any) {
-    clearTimeout(fetchTimeout);
     if (e.name === "AbortError") {
-      onError("Час очікування відповіді вичерпано (30с)");
+      onError("Час очікування відповіді вичерпано. Спробуйте ще раз.");
     } else {
       onError("Помилка з'єднання з AI");
     }
     return;
   }
-
-  clearTimeout(fetchTimeout);
 
   if (!resp.ok) {
     let errorMsg = "Помилка з'єднання з AI";
@@ -61,14 +80,14 @@ export async function streamChat({
   let textBuffer = "";
   let streamDone = false;
 
-  // First byte timeout: 15s
+  // First byte timeout: 20s
   let firstByteReceived = false;
   const firstByteTimeout = setTimeout(() => {
     if (!firstByteReceived) {
       reader.cancel();
-      onError("AI не відповідає (timeout 15с)");
+      onError("AI не відповідає (timeout 20с)");
     }
-  }, 15000);
+  }, 20000);
 
   try {
     while (!streamDone) {
@@ -136,7 +155,6 @@ export async function streamChat({
 
   clearTimeout(firstByteTimeout);
 
-  // Await onDone to ensure cleanup runs after async work
   try {
     await onDone();
   } catch (e) {

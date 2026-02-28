@@ -21,7 +21,7 @@ export function useChatSessions() {
     sessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
 
-  // Fetch all sessions
+  // Fetch all sessions (filter orphans — sessions without assistant responses)
   const fetchSessions = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -39,21 +39,25 @@ export function useChatSessions() {
     const sessionIds = sessionsData.map((s) => s.id);
     const { data: firstMessages } = await supabase
       .from("dilovod_messages")
-      .select("session_id, content")
+      .select("session_id, content, role")
       .in("session_id", sessionIds)
-      .eq("role", "user")
       .order("created_at", { ascending: true });
 
     const titleMap = new Map<string, string>();
+    const hasAssistant = new Set<string>();
     firstMessages?.forEach((m) => {
-      if (!titleMap.has(m.session_id)) {
+      if (m.role === "user" && !titleMap.has(m.session_id)) {
         titleMap.set(m.session_id, m.content.slice(0, 60));
+      }
+      if (m.role === "assistant") {
+        hasAssistant.add(m.session_id);
       }
     });
 
-    // Filter out sessions without user messages
+    // Only show sessions that have at least one assistant message (not orphans)
+    // Exception: current session (might be in-progress)
     const validSessions = sessionsData
-      .filter((s) => titleMap.has(s.id))
+      .filter((s) => (hasAssistant.has(s.id) || s.id === sessionIdRef.current) && titleMap.has(s.id))
       .map((s) => ({
         ...s,
         title: titleMap.get(s.id) || "Нова розмова",
@@ -136,9 +140,27 @@ export function useChatSessions() {
   }, []);
 
   // Save a message, using sessionIdOverride if provided
+  // Includes dedup guard: skip if identical content was saved <2s ago
+  const recentSaves = useRef<Map<string, number>>(new Map());
+
   const saveMessage = useCallback(
     async (msg: Omit<ChatMessage, "id" | "created_at">, sessionIdOverride?: string) => {
       const sessionId = sessionIdOverride || await ensureSessionId();
+
+      // Dedup guard
+      const dedupKey = `${sessionId}:${msg.role}:${msg.content}`;
+      const lastSaved = recentSaves.current.get(dedupKey) || 0;
+      if (Date.now() - lastSaved < 2000) {
+        console.warn("[saveMessage] Skipping duplicate save:", dedupKey.slice(0, 80));
+        // Still return a local msg so UI stays consistent
+        const newMsg: ChatMessage = {
+          ...msg,
+          id: crypto.randomUUID(),
+          created_at: new Date().toISOString(),
+        };
+        return { msg: newMsg, sessionId };
+      }
+      recentSaves.current.set(dedupKey, Date.now());
 
       const newMsg: ChatMessage = {
         ...msg,

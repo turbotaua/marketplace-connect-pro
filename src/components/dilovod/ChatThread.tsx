@@ -4,9 +4,9 @@ import { DraftCard } from "./DraftCard";
 import { ConfirmationMessage } from "./ConfirmationMessage";
 import { DisambiguationCard } from "./DisambiguationCard";
 import { cn } from "@/lib/utils";
-import { Sparkles, User, Loader2, Search } from "lucide-react";
+import { Sparkles, User, Loader2, Search, AlertTriangle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import type { Disambiguation } from "@/lib/draftResolver";
+import type { Disambiguation, DraftData } from "@/lib/draftResolver";
 
 interface ChatThreadProps {
   messages: ChatMessage[];
@@ -18,9 +18,10 @@ interface ChatThreadProps {
     selectedId: string,
     selectedName: string
   ) => void;
+  onDraftApprove?: (draft: DraftData) => void;
 }
 
-export const ChatThread = ({ messages, isStreaming, onDisambiguationSelect }: ChatThreadProps) => {
+export function ChatThread({ messages, isStreaming, onDisambiguationSelect, onDraftApprove }: ChatThreadProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,6 +29,16 @@ export const ChatThread = ({ messages, isStreaming, onDisambiguationSelect }: Ch
   }, [messages]);
 
   const renderMessageContent = (msg: ChatMessage) => {
+    // Error message
+    if (msg.metadata?.type === "error") {
+      return (
+        <div className="flex items-center gap-2 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <span>{msg.content}</span>
+        </div>
+      );
+    }
+
     // Resolving state — searching catalog
     if (msg.metadata?.type === "resolving") {
       return (
@@ -38,9 +49,14 @@ export const ChatThread = ({ messages, isStreaming, onDisambiguationSelect }: Ch
       );
     }
 
-    // Draft fully resolved — show DraftCard
+    // Draft fully resolved — show DraftCard with approve button
     if (msg.metadata?.type === "draft" && msg.metadata.draft) {
-      return <DraftCard draft={msg.metadata.draft} />;
+      return (
+        <DraftCard
+          draft={msg.metadata.draft}
+          onApprove={onDraftApprove ? () => onDraftApprove(msg.metadata!.draft as DraftData) : undefined}
+        />
+      );
     }
 
     // Disambiguation needed — show draft + disambiguation cards
@@ -119,6 +135,8 @@ export const ChatThread = ({ messages, isStreaming, onDisambiguationSelect }: Ch
               "rounded-2xl px-4 py-3 text-sm leading-relaxed",
               msg.role === "user"
                 ? "bg-primary text-primary-foreground"
+                : msg.metadata?.type === "error"
+                ? "bg-destructive/10 border border-destructive/30 text-foreground"
                 : "bg-card border border-border text-foreground"
             )}
           >
@@ -141,4 +159,4 @@ export const ChatThread = ({ messages, isStreaming, onDisambiguationSelect }: Ch
       <div ref={endRef} />
     </div>
   );
-};
+}

@@ -10,6 +10,7 @@ import { useChatSessions } from "@/hooks/useChatSessions";
 import { streamChat } from "@/lib/streamChat";
 import { parseDraftFromText, resolveDraft, type DraftData, type Disambiguation } from "@/lib/draftResolver";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface ChatMessage {
   id: string;
@@ -72,8 +73,7 @@ const Dilovod = () => {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  const lastSentRef = useRef<{ content: string; ts: number }>({ content: "", ts: 0 });
 
   const hasMessages = messages.length > 0;
 
@@ -123,12 +123,89 @@ const Dilovod = () => {
     [setMessages]
   );
 
+  // Handle draft approval — call createChain via proxy
+  const handleDraftApprove = useCallback(async (draft: DraftData) => {
+    const hasUnresolved = draft.counterparty.flagged || draft.items.some((i) => i.flagged);
+    if (hasUnresolved) {
+      toast.error("Спочатку оберіть контрагента та товари зі списку");
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+      const PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dilovod-proxy`;
+      const res = await fetch(PROXY_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          action: "createChain",
+          params: {
+            actionType: draft.actionType,
+            counterpartyId: draft.counterparty.dilovod_id,
+            counterpartyName: draft.counterparty.dilovod_name || draft.counterparty.extracted_name,
+            date: draft.date,
+            items: draft.items.map((item) => ({
+              itemId: item.dilovod_id,
+              itemName: item.dilovod_name || item.extracted_name,
+              qty: item.qty,
+              price: item.price,
+              total: item.total,
+            })),
+            totalSum: draft.total_sum,
+          },
+        }),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok || result.error) {
+        toast.error(result.error || "Помилка створення документів");
+        return;
+      }
+
+      // Show confirmation message
+      const sessionId = await ensureSessionId();
+      const dilovodIds = result.result?.chainIds || result.result || {};
+      await saveMessage(
+        {
+          role: "assistant",
+          content: "✅ Документи успішно створено в Діловод!",
+          metadata: {
+            type: "confirmation",
+            dilovodIds,
+            actionType: draft.actionType,
+          },
+        },
+        sessionId
+      );
+      toast.success("Документи створено в Діловод!");
+    } catch (e) {
+      console.error("createChain error:", e);
+      toast.error("Не вдалося створити документи");
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [ensureSessionId, saveMessage]);
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text && !uploadedFile) return;
     if (sendingRef.current) return;
-    sendingRef.current = true;
 
+    // Idempotency guard: prevent duplicate sends within 800ms
+    const now = Date.now();
+    if (text === lastSentRef.current.content && now - lastSentRef.current.ts < 800) {
+      return;
+    }
+    lastSentRef.current = { content: text, ts: now };
+
+    sendingRef.current = true;
     setInput("");
     const file = uploadedFile;
     setUploadedFile(null);
@@ -139,6 +216,13 @@ const Dilovod = () => {
     try {
       // Lock session id for this entire send flow
       const sessionId = await ensureSessionId();
+
+      // Snapshot history BEFORE saving new message (prevents duplication)
+      const historyForAI = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+      // Add current user message
+      historyForAI.push({ role: "user" as const, content: userContent });
 
       await saveMessage(
         {
@@ -152,13 +236,6 @@ const Dilovod = () => {
         },
         sessionId
       );
-
-      const historyForAI = [
-        ...messagesRef.current
-          .filter((m) => m.role === "user" || m.role === "assistant")
-          .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-        { role: "user" as const, content: userContent },
-      ];
 
       let assistantSoFar = "";
 
@@ -253,6 +330,17 @@ const Dilovod = () => {
           }
         },
         onError: (error) => {
+          // Show error in chat, not just toast
+          setMessages((prev) => [
+            ...prev.filter((m) => !m.id.startsWith("streaming-")),
+            {
+              id: `error-${Date.now()}`,
+              role: "assistant" as const,
+              content: `⚠️ ${error}`,
+              metadata: { type: "error" as const },
+              created_at: new Date().toISOString(),
+            },
+          ]);
           toast.error(error);
         },
       });
@@ -263,7 +351,7 @@ const Dilovod = () => {
       setIsProcessing(false);
       sendingRef.current = false;
     }
-  }, [input, uploadedFile, selectedAction, saveMessage, setMessages, ensureSessionId, refreshSessions]);
+  }, [input, uploadedFile, selectedAction, messages, saveMessage, setMessages, ensureSessionId, refreshSessions]);
 
   const handleFileSelect = async (file: File) => {
     setUploadedFile(file);
@@ -363,6 +451,7 @@ const Dilovod = () => {
                 messages={messages}
                 isStreaming={isProcessing}
                 onDisambiguationSelect={handleDisambiguationSelect}
+                onDraftApprove={handleDraftApprove}
               />
             </div>
 

@@ -1,6 +1,5 @@
 import { useRef } from "react";
 import { Upload, FileText } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
@@ -18,7 +17,7 @@ const ACCEPTED_TYPES = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ];
 
-export const FileUpload = ({ onFileSelect, uploadedFile, compact }: FileUploadProps) => {
+export function FileUpload({ onFileSelect, uploadedFile, compact }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -81,4 +80,4 @@ export const FileUpload = ({ onFileSelect, uploadedFile, compact }: FileUploadPr
       </label>
     </div>
   );
-};
+}
