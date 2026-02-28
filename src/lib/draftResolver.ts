@@ -117,7 +117,6 @@ function normalizeSearchQuery(query: string, type: "item" | "counterparty"): str
   }
 
   if (type === "counterparty") {
-    // Strip type suffixes like "фізособа"
     const lower = q.toLowerCase();
     for (const suffix of COUNTERPARTY_SUFFIXES) {
       if (lower.endsWith(" " + suffix) || lower.endsWith(", " + suffix)) {
@@ -142,48 +141,42 @@ function getDistinctiveWords(query: string): string[] {
     .filter((w) => !stopWords.includes(w));
 }
 
+/**
+ * Single fetch to proxy. Timeout 12s. No retry.
+ * Returns parsed JSON or null on error/timeout.
+ */
 async function callProxy(action: string, params: Record<string, unknown>): Promise<any> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-  const doFetch = async (): Promise<any> => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 35000); // 35s timeout
-    try {
-      const res = await fetch(PROXY_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ action, params }),
-        signal: controller.signal,
-      });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const res = await fetch(PROXY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ action, params }),
+      signal: controller.signal,
+    });
 
-      if (!res.ok) {
-        console.error(`Proxy error ${res.status} for ${action}`);
-        return null;
-      }
-      return res.json();
-    } catch (e: any) {
-      if (e.name === "AbortError") {
-        console.error(`Proxy timeout (35s) for ${action}`);
-      } else {
-        console.error(`Proxy fetch error for ${action}:`, e);
-      }
+    if (!res.ok) {
+      console.error(`Proxy error ${res.status} for ${action}`);
       return null;
-    } finally {
-      clearTimeout(timeout);
     }
-  };
-
-  // Try once, retry on null (timeout/error)
-  let result = await doFetch();
-  if (result === null) {
-    console.log(`[callProxy] Retrying ${action}...`);
-    result = await doFetch();
+    return res.json();
+  } catch (e: any) {
+    if (e.name === "AbortError") {
+      console.error(`Proxy timeout (12s) for ${action}`);
+    } else {
+      console.error(`Proxy fetch error for ${action}:`, e);
+    }
+    return null;
+  } finally {
+    clearTimeout(timeout);
   }
-  return result;
 }
 
 function normalizeForCompare(s: string): string {
@@ -194,7 +187,6 @@ function calculateMatchScore(query: string, candidateName: string): number {
   let q = normalizeForCompare(query);
   let c = normalizeForCompare(candidateName);
 
-  // Strip type prefixes from both for fair comparison
   for (const prefix of ITEM_TYPE_PREFIXES) {
     if (q.startsWith(prefix + " ")) { q = q.slice(prefix.length + 1); break; }
   }
@@ -206,7 +198,6 @@ function calculateMatchScore(query: string, candidateName: string): number {
   if (c.includes(q)) return 0.9;
   if (q.includes(c)) return 0.85;
 
-  // Word overlap
   const qWords = q.split(/\s+/).filter(Boolean);
   const cWords = c.split(/\s+/).filter(Boolean);
   const matchedWords = qWords.filter((w) =>
@@ -238,7 +229,7 @@ async function searchCatalogRaw(
 /**
  * Multi-strategy smart search:
  * 1. Normalized full name
- * 2. Fallback: individual distinctive words (if 0 results)
+ * 2. Fallback: max 1 distinctive word (if 0 results)
  * Deduplicates and scores all results.
  */
 async function smartSearch(
@@ -251,13 +242,12 @@ async function smartSearch(
   // Strategy 1: search normalized full name
   let candidates = await searchCatalogRaw(type, normalized);
 
-  // Strategy 2: fallback with distinctive words
+  // Strategy 2: fallback with max 1 distinctive word only
   if (candidates.length === 0) {
     const words = getDistinctiveWords(normalized);
-    for (const word of words) {
-      console.log(`[smartSearch] fallback search with word: "${word}"`);
-      candidates = await searchCatalogRaw(type, word);
-      if (candidates.length > 0) break;
+    if (words.length > 0) {
+      console.log(`[smartSearch] fallback search with word: "${words[0]}"`);
+      candidates = await searchCatalogRaw(type, words[0]);
     }
   }
 
@@ -281,75 +271,115 @@ const AUTO_RESOLVE_THRESHOLD = 0.85;
 const SINGLE_CANDIDATE_THRESHOLD = 0.7;
 
 /**
+ * Helper: resolve a single field (counterparty or item) and return disambiguation if needed.
+ * Never throws — catches errors internally and flags the field.
+ */
+async function resolveField(
+  type: "counterparty" | "item",
+  extractedName: string,
+  index?: number
+): Promise<{
+  dilovod_id?: string;
+  dilovod_name?: string;
+  flagged: boolean;
+  disambiguation?: Disambiguation;
+}> {
+  try {
+    const searchType = type === "counterparty" ? "counterparty" : "item";
+    const sorted = await smartSearch(searchType, extractedName);
+
+    if (sorted.length === 1 && (sorted[0].score ?? 0) >= SINGLE_CANDIDATE_THRESHOLD) {
+      return { dilovod_id: sorted[0].id, dilovod_name: sorted[0].name, flagged: false };
+    }
+    if (sorted.length > 0 && (sorted[0].score ?? 0) >= AUTO_RESOLVE_THRESHOLD) {
+      return { dilovod_id: sorted[0].id, dilovod_name: sorted[0].name, flagged: false };
+    }
+    // Needs disambiguation or no results
+    return {
+      flagged: true,
+      disambiguation: {
+        field: type,
+        index,
+        extractedName,
+        candidates: sorted.slice(0, 5),
+      },
+    };
+  } catch (err) {
+    console.error(`[resolveField] ${type} "${extractedName}" failed:`, err);
+    return {
+      flagged: true,
+      disambiguation: {
+        field: type,
+        index,
+        extractedName,
+        candidates: [],
+      },
+    };
+  }
+}
+
+/**
  * Resolve all extracted names in a draft against Dilovod catalog.
- * Auto-resolves high-confidence matches, returns disambiguations for the rest.
+ * Runs counterparty + all items in PARALLEL (Promise.allSettled).
+ * NEVER throws — always returns partial results with disambiguations.
  */
 export async function resolveDraft(draft: DraftData): Promise<ResolveResult> {
   const disambiguations: Disambiguation[] = [];
   const resolvedDraft = JSON.parse(JSON.stringify(draft)) as DraftData;
 
-  // Resolve counterparty
+  // Build all search tasks
+  const tasks: Array<{ type: "counterparty" | "item"; index?: number }> = [];
+
   if (!resolvedDraft.counterparty.dilovod_id) {
-    const sorted = await smartSearch("counterparty", resolvedDraft.counterparty.extracted_name);
-
-    if (sorted.length === 1 && (sorted[0].score ?? 0) >= SINGLE_CANDIDATE_THRESHOLD) {
-      resolvedDraft.counterparty.dilovod_id = sorted[0].id;
-      resolvedDraft.counterparty.dilovod_name = sorted[0].name;
-      resolvedDraft.counterparty.flagged = false;
-    } else if (sorted.length > 0 && (sorted[0].score ?? 0) >= AUTO_RESOLVE_THRESHOLD) {
-      resolvedDraft.counterparty.dilovod_id = sorted[0].id;
-      resolvedDraft.counterparty.dilovod_name = sorted[0].name;
-      resolvedDraft.counterparty.flagged = false;
-    } else if (sorted.length > 0) {
-      disambiguations.push({
-        field: "counterparty",
-        extractedName: resolvedDraft.counterparty.extracted_name,
-        candidates: sorted.slice(0, 5),
-      });
-      resolvedDraft.counterparty.flagged = true;
-    } else {
-      resolvedDraft.counterparty.flagged = true;
-      disambiguations.push({
-        field: "counterparty",
-        extractedName: resolvedDraft.counterparty.extracted_name,
-        candidates: [],
-      });
-    }
+    tasks.push({ type: "counterparty" });
   }
-
-  // Resolve items SEQUENTIALLY to avoid overwhelming the Dilovod API
-  for (let index = 0; index < resolvedDraft.items.length; index++) {
-    const item = resolvedDraft.items[index];
-    if (item.dilovod_id) continue;
-
-    const sorted = await smartSearch("item", item.extracted_name);
-
-    if (sorted.length === 1 && (sorted[0].score ?? 0) >= SINGLE_CANDIDATE_THRESHOLD) {
-      item.dilovod_id = sorted[0].id;
-      item.dilovod_name = sorted[0].name;
-      item.flagged = false;
-    } else if (sorted.length > 0 && (sorted[0].score ?? 0) >= AUTO_RESOLVE_THRESHOLD) {
-      item.dilovod_id = sorted[0].id;
-      item.dilovod_name = sorted[0].name;
-      item.flagged = false;
-    } else if (sorted.length > 0) {
-      disambiguations.push({
-        field: "item",
-        index,
-        extractedName: item.extracted_name,
-        candidates: sorted.slice(0, 5),
-      });
-      item.flagged = true;
-    } else {
-      item.flagged = true;
-      disambiguations.push({
-        field: "item",
-        index,
-        extractedName: item.extracted_name,
-        candidates: [],
-      });
+  resolvedDraft.items.forEach((item, i) => {
+    if (!item.dilovod_id) {
+      tasks.push({ type: "item", index: i });
     }
-  }
+  });
+
+  // Fire all in parallel (max concurrency is naturally limited by browser)
+  const results = await Promise.allSettled(
+    tasks.map((task) => {
+      const name = task.type === "counterparty"
+        ? resolvedDraft.counterparty.extracted_name
+        : resolvedDraft.items[task.index!].extracted_name;
+      return resolveField(task.type, name, task.index);
+    })
+  );
+
+  // Apply results
+  results.forEach((result, i) => {
+    const task = tasks[i];
+    // resolveField never throws, but Promise.allSettled handles it anyway
+    const resolved = result.status === "fulfilled"
+      ? result.value
+      : { flagged: true, disambiguation: { field: task.type, index: task.index, extractedName: "", candidates: [] } as Disambiguation };
+
+    if (task.type === "counterparty") {
+      if (resolved.dilovod_id) {
+        resolvedDraft.counterparty.dilovod_id = resolved.dilovod_id;
+        resolvedDraft.counterparty.dilovod_name = resolved.dilovod_name;
+        resolvedDraft.counterparty.flagged = false;
+      } else {
+        resolvedDraft.counterparty.flagged = true;
+      }
+    } else {
+      const idx = task.index!;
+      if (resolved.dilovod_id) {
+        resolvedDraft.items[idx].dilovod_id = resolved.dilovod_id;
+        resolvedDraft.items[idx].dilovod_name = resolved.dilovod_name;
+        resolvedDraft.items[idx].flagged = false;
+      } else {
+        resolvedDraft.items[idx].flagged = true;
+      }
+    }
+
+    if (resolved.disambiguation) {
+      disambiguations.push(resolved.disambiguation);
+    }
+  });
 
   return {
     draft: resolvedDraft,
