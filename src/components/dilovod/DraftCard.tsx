@@ -33,19 +33,25 @@ interface DraftCardProps {
 }
 
 const actionLabels: Record<string, string> = {
-  "sales.commission": "Комісія (магазини)",
-  "sales.end_consumer": "Кінцевий споживач",
-  "sales.return": "Повернення",
-  "purchase.goods": "Надходження товарів",
-  "purchase.services": "Надходження послуг",
+  "sales.order": "Замовлення покупцю",
+  "sales.commission": "Передача комісіонеру",
+  "sales.report": "Звіт комісіонера",
+  "sales.shipment": "Відвантаження споживачу",
+  "sales.return": "Повернення від покупця",
+  "purchase.order": "Замовлення постачальнику",
+  "purchase.receipt": "Надходження товарів/послуг",
+  "production.order": "Замовлення на виробництво",
 };
 
 const chainLabels: Record<string, string[]> = {
-  "sales.commission": ["Замовлення", "Рахунок", "Передача комісіонеру"],
-  "sales.end_consumer": ["Замовлення", "Відвантаження"],
+  "sales.order": ["Замовлення", "Рахунок"],
+  "sales.commission": ["Передача комісіонеру"],
+  "sales.report": ["Звіт про продажі"],
+  "sales.shipment": ["Замовлення", "Відвантаження"],
   "sales.return": ["Повернення від покупця"],
-  "purchase.goods": ["Надходження товарів"],
-  "purchase.services": ["Надходження послуг"],
+  "purchase.order": ["Замовлення постачальнику"],
+  "purchase.receipt": ["Надходження"],
+  "production.order": ["Замовлення на виробництво"],
 };
 
 export const DraftCard = ({ draft, onApprove, onReject, onEdit }: DraftCardProps) => {

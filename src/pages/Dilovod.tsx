@@ -5,7 +5,7 @@ import { ActionTags } from "@/components/dilovod/ActionTags";
 import { FileUpload } from "@/components/dilovod/FileUpload";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Send, Plus, Sparkles } from "lucide-react";
+import { Send, Sparkles } from "lucide-react";
 
 export interface ChatMessage {
   id: string;
@@ -24,13 +24,29 @@ export interface ChatMessage {
 }
 
 export type ActionType =
+  | "sales.order"
   | "sales.commission"
-  | "sales.end_consumer"
+  | "sales.report"
+  | "sales.shipment"
   | "sales.return"
-  | "purchase.goods"
-  | "purchase.services"
   | "purchase.order"
+  | "purchase.receipt"
   | "production.order";
+
+const actionLabels: Record<ActionType, string> = {
+  "sales.order": "Замовлення покупцю",
+  "sales.commission": "Передача комісіонеру",
+  "sales.report": "Звіт комісіонера",
+  "sales.shipment": "Відвантаження споживачу",
+  "sales.return": "Повернення від покупця",
+  "purchase.order": "Замовлення постачальнику",
+  "purchase.receipt": "Надходження товарів/послуг",
+  "production.order": "Замовлення на виробництво",
+};
+
+export function getActionLabel(action: ActionType): string {
+  return actionLabels[action];
+}
 
 const Dilovod = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -104,7 +120,6 @@ const Dilovod = () => {
     }
   };
 
-  // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -116,17 +131,20 @@ const Dilovod = () => {
     <AdminLayout>
       <div className="flex flex-col h-[calc(100vh)] max-w-3xl mx-auto w-full">
         {!hasMessages ? (
-          /* Empty state — Claude-like greeting */
           <div className="flex-1 flex flex-col items-center justify-center px-4">
-            <div className="flex items-center gap-3 mb-10">
-              <Sparkles className="h-8 w-8 text-primary" />
-              <h1 className="text-4xl md:text-5xl font-normal text-foreground"
-                  style={{ fontFamily: "'Instrument Serif', Georgia, serif" }}>
-                {getGreeting()}, Turbota
-              </h1>
+            <div className="flex flex-col items-center gap-2 mb-10">
+              <div className="flex items-center gap-3">
+                <Sparkles className="h-8 w-8 text-primary" />
+                <h1 className="text-4xl md:text-5xl font-normal text-foreground"
+                    style={{ fontFamily: "'Instrument Serif', Georgia, serif" }}>
+                  {getGreeting()}
+                </h1>
+              </div>
+              <p className="text-muted-foreground text-sm">
+                Dilovod AI — автоматизація документообігу
+              </p>
             </div>
 
-            {/* Input box */}
             <div className="w-full max-w-2xl">
               <div className="bg-card rounded-2xl border border-border shadow-sm p-4">
                 <Textarea
@@ -153,26 +171,21 @@ const Dilovod = () => {
                 </div>
               </div>
 
-              {/* Action Tags below input */}
-              <div className="mt-4 flex justify-center">
+              <div className="mt-6">
                 <ActionTags selected={selectedAction} onSelect={setSelectedAction} />
               </div>
             </div>
           </div>
         ) : (
-          /* Chat mode */
           <>
-            {/* Action Tags — sticky top */}
             <div className="border-b border-border px-4 py-2 bg-background/80 backdrop-blur-sm">
               <ActionTags selected={selectedAction} onSelect={setSelectedAction} compact />
             </div>
 
-            {/* Messages */}
             <div className="flex-1 overflow-hidden">
               <ChatThread messages={messages} />
             </div>
 
-            {/* Input Area */}
             <div className="border-t border-border p-4">
               <div className="bg-card rounded-2xl border border-border shadow-sm p-4">
                 <Textarea
@@ -205,18 +218,5 @@ const Dilovod = () => {
     </AdminLayout>
   );
 };
-
-function getActionLabel(action: ActionType): string {
-  const labels: Record<ActionType, string> = {
-    "sales.commission": "Комісія (магазини)",
-    "sales.end_consumer": "Кінцевий споживач",
-    "sales.return": "Повернення",
-    "purchase.goods": "Надходження товарів",
-    "purchase.services": "Надходження послуг",
-    "purchase.order": "Замовлення постачальнику",
-    "production.order": "Замовлення на виробництво",
-  };
-  return labels[action];
-}
 
 export default Dilovod;

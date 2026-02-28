@@ -2,22 +2,17 @@ import { useEffect, useState } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  LayoutDashboard, DollarSign, FolderTree, ScrollText, LogOut,
-  MessageSquare, Plus, Search, Settings, PanelLeftClose, PanelLeft
+  Plus, Search, Settings, PanelLeftClose, PanelLeft, LogOut, Store, Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Session } from "@supabase/supabase-js";
 
 const mainNav = [
-  { to: "/", label: "Новий чат", icon: Plus },
-  { to: "/search", label: "Пошук", icon: Search, disabled: true },
+  { to: "/", label: "Dilovod AI", icon: Sparkles },
 ];
 
 const toolsNav = [
-  { to: "/dashboard", label: "Дашборд", icon: LayoutDashboard },
-  { to: "/prices", label: "Ціни", icon: DollarSign },
-  { to: "/categories", label: "Категорії", icon: FolderTree },
-  { to: "/logs", label: "Логи", icon: ScrollText },
+  { to: "/marketplaces", label: "XML та Маркетплейси", icon: Store },
 ];
 
 const AdminLayout = ({ children }: { children: React.ReactNode }) => {
@@ -55,14 +50,12 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <div className="flex min-h-screen w-full">
-      {/* Sidebar */}
       <aside
         className={cn(
           "flex flex-col border-r border-sidebar-border bg-sidebar transition-all duration-300 ease-in-out",
           sidebarOpen ? "w-64" : "w-0 overflow-hidden border-r-0"
         )}
       >
-        {/* Brand */}
         <div className="flex items-center justify-between p-4 pb-2">
           <h1 className="text-xl font-normal tracking-tight text-sidebar-accent-foreground"
               style={{ fontFamily: "'Instrument Serif', Georgia, serif" }}>
@@ -76,15 +69,13 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
           </button>
         </div>
 
-        {/* Main nav */}
         <nav className="px-3 py-2 space-y-0.5">
           {mainNav.map((item) => (
             <Link
               key={item.to}
-              to={item.disabled ? "#" : item.to}
+              to={item.to}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                item.disabled && "opacity-40 pointer-events-none",
                 location.pathname === item.to
                   ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
                   : "text-sidebar-foreground hover:bg-sidebar-accent/60"
@@ -96,7 +87,6 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
           ))}
         </nav>
 
-        {/* Divider + Tools */}
         <div className="px-3 pt-4 pb-1">
           <span className="px-3 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             Інструменти
@@ -120,7 +110,6 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
           ))}
         </nav>
 
-        {/* User footer */}
         <div className="p-3 border-t border-sidebar-border">
           <div className="flex items-center gap-3 px-3 py-2">
             <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-medium">
@@ -140,7 +129,6 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
         </div>
       </aside>
 
-      {/* Main content */}
       <main className="flex-1 bg-background overflow-auto relative">
         {!sidebarOpen && (
           <button
