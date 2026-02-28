@@ -1,60 +1,80 @@
 
 
-## Problem
+## Plan: Connect AI to Chat + Update Commission & Purchase Chains
 
-1. **Commission flow is mixed up.** Current "Продаж магазинам (комісія)" implies one action creates everything (Order → Invoice → Transfer → Report). In reality, **Transfer to Consignee** and **Commission Report** are separate business events separated by weeks/months. Transfer happens when goods are sent to the store. Report happens when the store actually sells them and reports back.
+### 1. Create `dilovod-chat` Edge Function
 
-2. **Action labels are unclear.** "Комісія", "Споживач", "Товари" don't tell the user what documents will be created.
+New file: `supabase/functions/dilovod-chat/index.ts`
 
-3. **Page title doesn't say "Dilovod AI"** — greeting says "Turbota" with no context about what the tool does.
+Uses Lovable AI (Gemini Flash) as the AI backend. The function:
+- Receives `{ messages, sessionId, actionType }` from the frontend
+- Sends conversation history to AI with a system prompt that understands Dilovod business logic
+- System prompt instructs AI to:
+  - Help user understand what action to choose
+  - Parse uploaded file names / user descriptions into draft documents
+  - Return structured JSON drafts (via tool calling) when it has enough info
+  - Ask clarifying questions when ambiguous
+- Streams response back via SSE for real-time token rendering
+- Handles 429/402 errors gracefully
 
-4. **Tools pages need merging** — Dashboard, Prices, Categories, Logs should be one "XML та Маркетплейси" page.
+System prompt will include knowledge of all 8 action types with their document chains explained in plain Ukrainian.
 
-## Changes
+### 2. Update `Dilovod.tsx` — Replace Simulated Responses with AI Streaming
 
-### 1. Split commission into separate actions & redesign all ActionTags
+- Remove the `setTimeout` mock response in `handleSend`
+- Add `streamChat()` utility that calls the edge function and renders tokens as they arrive
+- Update the assistant message progressively (token-by-token) using `setMessages` pattern from the Lovable AI docs
+- Show a typing indicator while streaming
+- Handle errors (429, 402, network) with toast notifications
 
-New `ActionType` list reflecting actual separate business operations:
+### 3. Update Commission Chain: `sales.commission`
+
+**ActionTags label**: "Комісія (повний ланцюжок)"
+**Description**: "Замовлення → Рахунок → Передача → Видаткова накладна"
+
+**Backend (`dilovod-proxy`)**: Update the `sales.commission` chain to 4 steps:
+1. Sales Order (`saleOrderCreate`)
+2. Invoice (`documents.saleInvoice`, baseDoc=order)
+3. Transfer to Consignee (`documents.sale`, docMode=commission, baseDoc=order)
+4. Expense Invoice / Видаткова накладна (`documents.sale`, docMode=goods, baseDoc=order)
+
+Remove Step 4 (commission report) from this chain — `sales.report` stays separate.
+
+**DraftCard `chainLabels`**: `["Замовлення", "Рахунок", "Передача комісіонеру", "Видаткова накладна"]`
+**ConfirmationMessage**: Add `expense_invoice_id: "Видаткова накладна"`
+
+### 4. Update Purchase Chain: `purchase.receipt`
+
+**ActionTags label**: "Надходження товарів/послуг"
+**Description**: "Замовлення + Надходження (або тільки надходження)"
+
+**Backend (`dilovod-proxy`)**: The existing logic already supports `draft.createSupplierOrder` flag. The AI system prompt will instruct the model to ask the user: "Чи є замовлення постачальнику, чи створити одразу надходження?"
+
+**DraftCard `chainLabels`**: `["Замовлення (опціонально)", "Надходження"]`
+
+Merge `purchase.order` into `purchase.receipt` as a single action with optional order step. Remove `purchase.order` as a separate ActionType.
+
+### 5. Simplify ActionTypes
+
+Remove `purchase.order` as standalone — it becomes part of `purchase.receipt`. Updated list:
 
 ```text
-ПРОДАЖІ:
-  "sales.order"        → "Замовлення покупцю"        (Створює: Замовлення + Рахунок)
-  "sales.commission"   → "Передача комісіонеру"      (На підставі замовлення → Передача)
-  "sales.report"       → "Звіт комісіонера"          (На підставі передачі → Звіт про продажі)
-  "sales.shipment"     → "Відвантаження споживачу"   (На підставі замовлення → Відвантаження)
-  "sales.return"       → "Повернення від покупця"     (На підставі відвантаження)
-
-ЗАКУПІВЛІ:
-  "purchase.order"     → "Замовлення постачальнику"   (Створює замовлення)
-  "purchase.receipt"   → "Надходження товарів/послуг" (На підставі замовлення або без)
-
-ВИРОБНИЦТВО:
-  "production.order"   → "Замовлення на виробництво"  (Перевірка специфікації → Створення)
+sales.order, sales.commission, sales.report, sales.shipment, sales.return,
+purchase.receipt, production.order
 ```
 
-Each action tag becomes a card with:
-- **Title**: what you're doing (e.g. "Передача комісіонеру")
-- **Subtitle**: what documents get created (e.g. "На підставі існуючого замовлення")
+7 actions instead of 8. Cleaner for the user.
 
-### 2. Rename page title
-
-- Greeting: `"{getGreeting()}, Turbota"` → subtitle below: **"Dilovod AI — автоматизація документообігу"**
-
-### 3. Merge tools into single page
-
-- Create `src/pages/Marketplaces.tsx` with tabs: Огляд, Ціни, Категорії, Логи
-- Import content from existing Dashboard, Prices, Categories, Logs pages
-- Sidebar: replace 4 links with single "XML та Маркетплейси" link
-- Update routes in App.tsx
-
-### Files to change
+### Files to Change
 
 | File | What |
 |---|---|
-| `src/pages/Dilovod.tsx` | New ActionType union, updated labels, page subtitle |
-| `src/components/dilovod/ActionTags.tsx` | Redesign to grouped cards with descriptions |
-| `src/components/dilovod/DraftCard.tsx` | Update chainLabels and actionLabels for new types |
-| `src/pages/Marketplaces.tsx` | **New** — tabbed page combining Dashboard/Prices/Categories/Logs |
-| `src/components/AdminLayout.tsx` | Sidebar: single "XML та Маркетплейси" link |
-| `src/App.tsx` | Add `/marketplaces` route, keep old routes as redirects |
+| `supabase/functions/dilovod-chat/index.ts` | **New** — AI chat edge function with streaming |
+| `supabase/config.toml` | Add `dilovod-chat` function config |
+| `src/pages/Dilovod.tsx` | Replace mock responses with AI streaming, remove `purchase.order` from ActionType |
+| `src/components/dilovod/ActionTags.tsx` | Update labels, remove `purchase.order`, update `sales.commission` desc |
+| `src/components/dilovod/DraftCard.tsx` | Update chainLabels and actionLabels |
+| `src/components/dilovod/ConfirmationMessage.tsx` | Add `expense_invoice_id` label |
+| `src/components/dilovod/ChatThread.tsx` | Add typing indicator for streaming |
+| `supabase/functions/dilovod-proxy/index.ts` | Update commission chain (replace comReport with expense invoice), remove purchase.order standalone handling |
 
