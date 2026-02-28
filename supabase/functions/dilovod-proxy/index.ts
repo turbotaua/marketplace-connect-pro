@@ -38,6 +38,9 @@ async function callDilovod(apiKey: string, action: string, params: Record<string
     if (data.error) {
       throw new Error(`Dilovod API error: ${JSON.stringify(data.error)}`);
     }
+    if (data.status === "error") {
+      throw new Error(`Dilovod API error: ${data.errorMessage || JSON.stringify(data)}`);
+    }
     return data;
   } catch (e) {
     if (e.name === "AbortError") {
@@ -64,7 +67,15 @@ async function rollbackChain(apiKey: string, chainIds: Record<string, string>) {
 function extractId(result: any): string {
   if (typeof result === "string") return result;
   if (typeof result === "number") return String(result);
-  return result?.result?.id || result?.id || result?.result || String(result);
+  // Try common patterns from Dilovod API responses
+  const id = result?.result?.id || result?.id || result?.result?.header?.id;
+  if (id && typeof id === "string") return id;
+  if (id && typeof id === "number") return String(id);
+  // If result.result is a string/number (direct ID)
+  if (typeof result?.result === "string") return result.result;
+  if (typeof result?.result === "number") return String(result.result);
+  console.warn("[extractId] Could not extract ID from:", JSON.stringify(result).slice(0, 200));
+  return "";
 }
 
 // Cache helpers
@@ -248,34 +259,47 @@ serve(async (req) => {
 
       // ===== CHAIN CREATION =====
       case "createChain": {
-        const { actionType, draft } = params;
+        const { actionType } = params;
+        // Support both flat params (from frontend) and nested params.draft (legacy)
+        const draft = params.draft || params;
         const chainIds: Record<string, string> = {};
+        
+        // Convert date string "2026-02-28" to datetime format "2026-02-28T00:00:00"
+        const docDate = draft.date && !draft.date.includes("T") ? `${draft.date}T00:00:00` : draft.date;
+        
+        // Normalize item field names: frontend sends itemId, proxy uses dilovod_id
+        const normalizedItems = (draft.items || []).map((i: any) => ({
+          ...i,
+          dilovod_id: i.dilovod_id || i.itemId,
+          dilovod_name: i.dilovod_name || i.itemName,
+        }));
 
         try {
-          if (actionType === "sales.commission") {
+          if (actionType === "sales.order") {
             // Step 1: Sales Order (saleOrderCreate)
             const order = await callDilovod(apiKey, "call", {
               method: "saleOrderCreate",
               arguments: {
-                header: { firm: draft.firmId, person: draft.counterpartyId, date: draft.date },
-                goods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
+                header: { ...(draft.firmId ? { firm: draft.firmId } : {}), person: draft.counterpartyId, date: docDate },
+                goods: normalizedItems.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
                 placement: { autoPlacement: true },
               },
             });
             chainIds.order_id = extractId(order);
 
             // Step 2: Customer Invoice (documents.saleInvoice)
+            console.log(`[createChain] order created, id=${chainIds.order_id}`);
             const invoice = await callDilovod(apiKey, "saveObject", {
               saveType: 1,
               header: {
                 id: "documents.saleInvoice",
-                firm: draft.firmId,
+                ...(draft.firmId ? { firm: draft.firmId } : {}),
                 person: draft.counterpartyId,
-                date: draft.date,
+                date: docDate,
                 baseDoc: chainIds.order_id,
               },
               tableParts: {
-                tpGoods: draft.items.map((i: any, idx: number) => ({
+                tpGoods: normalizedItems.map((i: any, idx: number) => ({
                   rowNum: idx + 1,
                   good: i.dilovod_id,
                   qty: i.qty,
@@ -285,113 +309,120 @@ serve(async (req) => {
               },
             });
             chainIds.invoice_id = extractId(invoice);
+            console.log(`[createChain] invoice created, id=${chainIds.invoice_id}`);
 
-            // Step 3: Transfer to Consignee (documents.sale, docMode=commission)
+          } else if (actionType === "sales.commission") {
+            const order = await callDilovod(apiKey, "call", {
+              method: "saleOrderCreate",
+              arguments: {
+                header: { firm: draft.firmId, person: draft.counterpartyId, date: docDate },
+                goods: normalizedItems.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
+                placement: { autoPlacement: true },
+              },
+            });
+            chainIds.order_id = extractId(order);
+
+            const invoice = await callDilovod(apiKey, "saveObject", {
+              saveType: 1,
+              header: {
+                id: "documents.saleInvoice",
+                firm: draft.firmId,
+                person: draft.counterpartyId,
+                date: docDate,
+                baseDoc: chainIds.order_id,
+              },
+              tableParts: {
+                tpGoods: normalizedItems.map((i: any, idx: number) => ({
+                  rowNum: idx + 1, good: i.dilovod_id, qty: i.qty, price: i.price, amountCur: i.total || i.qty * i.price,
+                })),
+              },
+            });
+            chainIds.invoice_id = extractId(invoice);
+
             const transfer = await callDilovod(apiKey, "saveObject", {
               saveType: 1,
               header: {
                 id: "documents.sale",
                 firm: draft.firmId,
                 person: draft.counterpartyId,
-                date: draft.date,
+                date: docDate,
                 baseDoc: chainIds.order_id,
                 docMode: DOC_MODE.commission,
               },
               tableParts: {
-                tpGoods: draft.items.map((i: any, idx: number) => ({
-                  rowNum: idx + 1,
-                  good: i.dilovod_id,
-                  qty: i.qty,
-                  price: i.price,
-                  amountCur: i.total || i.qty * i.price,
+                tpGoods: normalizedItems.map((i: any, idx: number) => ({
+                  rowNum: idx + 1, good: i.dilovod_id, qty: i.qty, price: i.price, amountCur: i.total || i.qty * i.price,
                 })),
               },
             });
             chainIds.transfer_id = extractId(transfer);
 
-            // Step 4: Expense Invoice / Видаткова накладна (documents.sale, docMode=goods)
             const expenseInvoice = await callDilovod(apiKey, "saveObject", {
               saveType: 1,
               header: {
                 id: "documents.sale",
                 firm: draft.firmId,
                 person: draft.counterpartyId,
-                date: draft.date,
+                date: docDate,
                 baseDoc: chainIds.order_id,
                 docMode: DOC_MODE.goods,
               },
               tableParts: {
-                tpGoods: draft.items.map((i: any, idx: number) => ({
-                  rowNum: idx + 1,
-                  good: i.dilovod_id,
-                  qty: i.qty,
-                  price: i.price,
-                  amountCur: i.total || i.qty * i.price,
+                tpGoods: normalizedItems.map((i: any, idx: number) => ({
+                  rowNum: idx + 1, good: i.dilovod_id, qty: i.qty, price: i.price, amountCur: i.total || i.qty * i.price,
                 })),
               },
             });
             chainIds.expense_invoice_id = extractId(expenseInvoice);
 
           } else if (actionType === "sales.end_consumer") {
-            // Step 1: Sales Order
             const order = await callDilovod(apiKey, "call", {
               method: "saleOrderCreate",
               arguments: {
-                header: { firm: draft.firmId, person: draft.counterpartyId, date: draft.date },
-                goods: draft.items.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
+                header: { firm: draft.firmId, person: draft.counterpartyId, date: docDate },
+                goods: normalizedItems.map((i: any) => ({ good: i.dilovod_id, qty: i.qty, price: i.price })),
                 placement: { autoPlacement: true },
               },
             });
             chainIds.order_id = extractId(order);
 
-            // Step 2: Shipment (documents.sale, docMode=goods)
             const sale = await callDilovod(apiKey, "saveObject", {
               saveType: 1,
               header: {
                 id: "documents.sale",
                 firm: draft.firmId,
                 person: draft.counterpartyId,
-                date: draft.date,
+                date: docDate,
                 baseDoc: chainIds.order_id,
                 docMode: DOC_MODE.goods,
               },
               tableParts: {
-                tpGoods: draft.items.map((i: any, idx: number) => ({
-                  rowNum: idx + 1,
-                  good: i.dilovod_id,
-                  qty: i.qty,
-                  price: i.price,
-                  amountCur: i.total || i.qty * i.price,
+                tpGoods: normalizedItems.map((i: any, idx: number) => ({
+                  rowNum: idx + 1, good: i.dilovod_id, qty: i.qty, price: i.price, amountCur: i.total || i.qty * i.price,
                 })),
               },
             });
             chainIds.shipment_id = extractId(sale);
 
           } else if (actionType === "sales.return") {
-            // Return from buyer (documents.saleReturn, baseDoc = original shipment)
             const ret = await callDilovod(apiKey, "saveObject", {
               saveType: 1,
               header: {
                 id: "documents.saleReturn",
                 firm: draft.firmId,
                 person: draft.counterpartyId,
-                date: draft.date,
+                date: docDate,
                 baseDoc: draft.originalShipmentId,
               },
               tableParts: {
-                tpGoods: draft.items.map((i: any, idx: number) => ({
-                  rowNum: idx + 1,
-                  good: i.dilovod_id,
-                  qty: i.return_qty || i.qty,
-                  price: i.price,
-                  amountCur: (i.return_qty || i.qty) * i.price,
+                tpGoods: normalizedItems.map((i: any, idx: number) => ({
+                  rowNum: idx + 1, good: i.dilovod_id, qty: i.return_qty || i.qty, price: i.price, amountCur: (i.return_qty || i.qty) * i.price,
                 })),
               },
             });
             chainIds.return_id = extractId(ret);
 
           } else if (actionType === "purchase.receipt" || actionType === "purchase.goods" || actionType === "purchase.services") {
-            // Optional Step 1: Supplier Order (documents.purchaseOrder)
             if (draft.createSupplierOrder) {
               const supplierOrder = await callDilovod(apiKey, "saveObject", {
                 saveType: 1,
@@ -399,38 +430,29 @@ serve(async (req) => {
                   id: "documents.purchaseOrder",
                   firm: draft.firmId,
                   person: draft.counterpartyId,
-                  date: draft.date,
+                  date: docDate,
                 },
                 tableParts: {
-                  tpGoods: draft.items.map((i: any, idx: number) => ({
-                    rowNum: idx + 1,
-                    good: i.dilovod_id,
-                    qty: i.qty,
-                    price: i.price,
-                    amountCur: i.total || i.qty * i.price,
+                  tpGoods: normalizedItems.map((i: any, idx: number) => ({
+                    rowNum: idx + 1, good: i.dilovod_id, qty: i.qty, price: i.price, amountCur: i.total || i.qty * i.price,
                   })),
                 },
               });
               chainIds.supplier_order_id = extractId(supplierOrder);
             }
 
-            // Step 2 (or 1): Goods Receipt (documents.purchase)
             const receipt = await callDilovod(apiKey, "saveObject", {
               saveType: 1,
               header: {
                 id: "documents.purchase",
                 firm: draft.firmId,
                 person: draft.counterpartyId,
-                date: draft.date,
+                date: docDate,
                 ...(chainIds.supplier_order_id ? { baseDoc: chainIds.supplier_order_id } : {}),
               },
               tableParts: {
-                tpGoods: draft.items.map((i: any, idx: number) => ({
-                  rowNum: idx + 1,
-                  good: i.dilovod_id,
-                  qty: i.qty,
-                  price: i.price,
-                  amountCur: i.total || i.qty * i.price,
+                tpGoods: normalizedItems.map((i: any, idx: number) => ({
+                  rowNum: idx + 1, good: i.dilovod_id, qty: i.qty, price: i.price, amountCur: i.total || i.qty * i.price,
                   ...(i.accountId ? { accGood: i.accountId } : {}),
                 })),
               },
@@ -438,20 +460,17 @@ serve(async (req) => {
             chainIds.receipt_id = extractId(receipt);
 
           } else if (actionType === "production.order") {
-            // Production order (documents.prodOrder)
             const prodOrder = await callDilovod(apiKey, "saveObject", {
               saveType: 1,
               header: {
                 id: "documents.prodOrder",
                 firm: draft.firmId,
-                date: draft.date,
+                date: docDate,
                 ...(draft.counterpartyId ? { person: draft.counterpartyId } : {}),
               },
               tableParts: {
-                tpGoods: draft.items.map((i: any, idx: number) => ({
-                  rowNum: idx + 1,
-                  good: i.dilovod_id,
-                  qty: i.qty,
+                tpGoods: normalizedItems.map((i: any, idx: number) => ({
+                  rowNum: idx + 1, good: i.dilovod_id, qty: i.qty,
                   ...(i.price ? { price: i.price, amountCur: i.total || i.qty * i.price } : {}),
                 })),
               },
@@ -465,6 +484,14 @@ serve(async (req) => {
             await rollbackChain(apiKey, chainIds);
           }
           throw chainError;
+        }
+
+        // Validate: if no documents were created, return error
+        if (Object.keys(chainIds).length === 0) {
+          return new Response(
+            JSON.stringify({ error: `Невідомий тип операції: ${actionType}. Документи не створено.` }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
         }
 
         result = { chainIds };
