@@ -87,20 +87,34 @@ async function callProxy(action: string, params: Record<string, unknown>): Promi
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-  const res = await fetch(PROXY_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ action, params }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(PROXY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ action, params }),
+      signal: controller.signal,
+    });
 
-  if (!res.ok) {
-    console.error(`Proxy error ${res.status} for ${action}`);
+    if (!res.ok) {
+      console.error(`Proxy error ${res.status} for ${action}`);
+      return null;
+    }
+    return res.json();
+  } catch (e: any) {
+    if (e.name === "AbortError") {
+      console.error(`Proxy timeout (10s) for ${action}`);
+    } else {
+      console.error(`Proxy fetch error for ${action}:`, e);
+    }
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json();
 }
 
 function normalizeForCompare(s: string): string {
