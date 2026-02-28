@@ -292,41 +292,24 @@ const Dilovod = () => {
               )
             );
 
-            try {
-              const { draft, disambiguations, isFullyResolved } = await Promise.race([
-                resolveDraft(parsedDraft),
-                new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error("Resolution timeout")), 60000)
-                ),
-              ]);
+            // resolveDraft never throws — always returns partial results
+            const { draft, disambiguations, isFullyResolved } = await resolveDraft(parsedDraft);
 
-              // Update message metadata with resolved draft
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === savedMsg.id
-                    ? {
-                        ...m,
-                        metadata: {
-                          type: isFullyResolved ? "draft" as const : "disambiguation" as const,
-                          draft,
-                          disambiguations: isFullyResolved ? undefined : disambiguations,
-                        },
-                      }
-                    : m
-                )
-              );
-            } catch (err) {
-              console.error("Draft resolution failed:", err);
-              // Revert to plain text display
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === savedMsg.id
-                    ? { ...m, metadata: undefined }
-                    : m
-                )
-              );
-              toast.error("Не вдалося знайти товари в каталозі. Відповідь збережено як текст.");
-            }
+            // Always show the draft — flagged fields show "needs selection"
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === savedMsg.id
+                  ? {
+                      ...m,
+                      metadata: {
+                        type: isFullyResolved ? "draft" as const : "disambiguation" as const,
+                        draft,
+                        disambiguations: isFullyResolved ? undefined : disambiguations,
+                      },
+                    }
+                  : m
+              )
+            );
           }
         },
         onError: (error) => {
