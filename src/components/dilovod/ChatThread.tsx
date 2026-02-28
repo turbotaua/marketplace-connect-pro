@@ -3,14 +3,15 @@ import type { ChatMessage } from "@/pages/Dilovod";
 import { DraftCard } from "./DraftCard";
 import { ConfirmationMessage } from "./ConfirmationMessage";
 import { cn } from "@/lib/utils";
-import { Sparkles, User } from "lucide-react";
+import { Sparkles, User, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 interface ChatThreadProps {
   messages: ChatMessage[];
+  isStreaming?: boolean;
 }
 
-export const ChatThread = ({ messages }: ChatThreadProps) => {
+export const ChatThread = ({ messages, isStreaming }: ChatThreadProps) => {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -27,13 +28,10 @@ export const ChatThread = ({ messages }: ChatThreadProps) => {
             msg.role === "user" ? "ml-auto flex-row-reverse" : ""
           )}
         >
-          {/* Avatar */}
           <div
             className={cn(
               "flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center mt-0.5",
-              msg.role === "user"
-                ? "bg-primary/10 text-primary"
-                : "bg-primary/10 text-primary"
+              "bg-primary/10 text-primary"
             )}
           >
             {msg.role === "user" ? (
@@ -43,7 +41,6 @@ export const ChatThread = ({ messages }: ChatThreadProps) => {
             )}
           </div>
 
-          {/* Content */}
           <div
             className={cn(
               "rounded-2xl px-4 py-3 text-sm leading-relaxed",
@@ -64,6 +61,18 @@ export const ChatThread = ({ messages }: ChatThreadProps) => {
           </div>
         </div>
       ))}
+
+      {isStreaming && messages[messages.length - 1]?.role !== "assistant" && (
+        <div className="flex gap-3 max-w-[90%]">
+          <div className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center mt-0.5 bg-primary/10 text-primary">
+            <Sparkles className="h-3.5 w-3.5" />
+          </div>
+          <div className="rounded-2xl px-4 py-3 text-sm bg-card border border-border text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </div>
+        </div>
+      )}
+
       <div ref={endRef} />
     </div>
   );

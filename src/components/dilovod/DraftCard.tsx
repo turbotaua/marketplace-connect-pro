@@ -34,23 +34,21 @@ interface DraftCardProps {
 
 const actionLabels: Record<string, string> = {
   "sales.order": "Замовлення покупцю",
-  "sales.commission": "Передача комісіонеру",
+  "sales.commission": "Комісія (повний ланцюжок)",
   "sales.report": "Звіт комісіонера",
   "sales.shipment": "Відвантаження споживачу",
   "sales.return": "Повернення від покупця",
-  "purchase.order": "Замовлення постачальнику",
   "purchase.receipt": "Надходження товарів/послуг",
   "production.order": "Замовлення на виробництво",
 };
 
 const chainLabels: Record<string, string[]> = {
   "sales.order": ["Замовлення", "Рахунок"],
-  "sales.commission": ["Передача комісіонеру"],
+  "sales.commission": ["Замовлення", "Рахунок", "Передача комісіонеру", "Видаткова накладна"],
   "sales.report": ["Звіт про продажі"],
   "sales.shipment": ["Замовлення", "Відвантаження"],
   "sales.return": ["Повернення від покупця"],
-  "purchase.order": ["Замовлення постачальнику"],
-  "purchase.receipt": ["Надходження"],
+  "purchase.receipt": ["Замовлення (опціонально)", "Надходження"],
   "production.order": ["Замовлення на виробництво"],
 };
 

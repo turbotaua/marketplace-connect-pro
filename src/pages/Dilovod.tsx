@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import AdminLayout from "@/components/AdminLayout";
 import { ChatThread } from "@/components/dilovod/ChatThread";
 import { ActionTags } from "@/components/dilovod/ActionTags";
@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Send, Sparkles } from "lucide-react";
 import { useChatSessions } from "@/hooks/useChatSessions";
+import { streamChat } from "@/lib/streamChat";
+import { toast } from "sonner";
 
 export interface ChatMessage {
   id: string;
@@ -30,17 +32,15 @@ export type ActionType =
   | "sales.report"
   | "sales.shipment"
   | "sales.return"
-  | "purchase.order"
   | "purchase.receipt"
   | "production.order";
 
 const actionLabels: Record<ActionType, string> = {
   "sales.order": "Замовлення покупцю",
-  "sales.commission": "Передача комісіонеру",
+  "sales.commission": "Комісія (повний ланцюжок)",
   "sales.report": "Звіт комісіонера",
   "sales.shipment": "Відвантаження споживачу",
   "sales.return": "Повернення від покупця",
-  "purchase.order": "Замовлення постачальнику",
   "purchase.receipt": "Надходження товарів/послуг",
   "production.order": "Замовлення на виробництво",
 };
@@ -54,6 +54,7 @@ const Dilovod = () => {
     sessions,
     currentSessionId,
     messages,
+    setMessages,
     loadingMessages,
     loadSession,
     startNewChat,
@@ -75,32 +76,89 @@ const Dilovod = () => {
     return "Доброго вечора";
   };
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text && !uploadedFile) return;
+    if (isProcessing) return;
 
     setInput("");
     const file = uploadedFile;
     setUploadedFile(null);
+    setIsProcessing(true);
 
+    const userContent = text || (file ? `📎 ${file.name}` : "");
+
+    // Save user message
     await saveMessage({
       role: "user",
-      content: text || (file ? `📎 ${file.name}` : ""),
+      content: userContent,
       metadata: file
         ? { fileName: file.name, actionType: selectedAction || undefined }
+        : selectedAction
+        ? { actionType: selectedAction }
         : undefined,
     });
 
-    // Simulated assistant response
-    setTimeout(async () => {
-      await saveMessage({
-        role: "assistant",
-        content: selectedAction
-          ? `Обробляю документ як **${getActionLabel(selectedAction)}**... (підключення до backend буде у наступних фазах)`
-          : "Оберіть тип операції або завантажте документ для початку роботи.",
+    // Build history for AI
+    const historyForAI = [
+      ...messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      { role: "user" as const, content: userContent },
+    ];
+
+    let assistantSoFar = "";
+
+    try {
+      await streamChat({
+        messages: historyForAI,
+        actionType: selectedAction,
+        onDelta: (chunk) => {
+          assistantSoFar += chunk;
+          const currentContent = assistantSoFar;
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === "assistant" && last.id.startsWith("streaming-")) {
+              return prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, content: currentContent } : m
+              );
+            }
+            return [
+              ...prev,
+              {
+                id: `streaming-${Date.now()}`,
+                role: "assistant" as const,
+                content: currentContent,
+                created_at: new Date().toISOString(),
+              },
+            ];
+          });
+        },
+        onDone: async () => {
+          // Replace streaming message with persisted one
+          if (assistantSoFar) {
+            // Remove the streaming placeholder
+            setMessages((prev) =>
+              prev.filter((m) => !m.id.startsWith("streaming-"))
+            );
+            await saveMessage({
+              role: "assistant",
+              content: assistantSoFar,
+            });
+          }
+          setIsProcessing(false);
+        },
+        onError: (error) => {
+          toast.error(error);
+          setIsProcessing(false);
+        },
       });
-    }, 500);
-  };
+    } catch (e) {
+      console.error("Stream error:", e);
+      toast.error("Помилка з'єднання з AI");
+      setIsProcessing(false);
+    }
+  }, [input, uploadedFile, isProcessing, selectedAction, messages, saveMessage, setMessages]);
 
   const handleFileSelect = async (file: File) => {
     setUploadedFile(file);
@@ -112,7 +170,7 @@ const Dilovod = () => {
     if (!selectedAction) {
       await saveMessage({
         role: "assistant",
-        content: "Файл отримано. Оберіть тип операції:",
+        content: "Файл отримано. Оберіть тип операції або опишіть що потрібно зробити:",
         metadata: { type: "text" },
       });
     }
@@ -175,7 +233,7 @@ const Dilovod = () => {
                   <FileUpload onFileSelect={handleFileSelect} uploadedFile={uploadedFile} compact />
                   <Button
                     onClick={handleSend}
-                    disabled={isProcessing && !input.trim() && !uploadedFile}
+                    disabled={isProcessing || (!input.trim() && !uploadedFile)}
                     size="icon"
                     variant="ghost"
                     className="rounded-full h-9 w-9 text-muted-foreground hover:text-foreground"
@@ -197,7 +255,7 @@ const Dilovod = () => {
             </div>
 
             <div className="flex-1 overflow-hidden">
-              <ChatThread messages={messages} />
+              <ChatThread messages={messages} isStreaming={isProcessing} />
             </div>
 
             <div className="border-t border-border p-4">
@@ -216,7 +274,7 @@ const Dilovod = () => {
                   <FileUpload onFileSelect={handleFileSelect} uploadedFile={uploadedFile} compact />
                   <Button
                     onClick={handleSend}
-                    disabled={isProcessing && !input.trim() && !uploadedFile}
+                    disabled={isProcessing || (!input.trim() && !uploadedFile)}
                     size="icon"
                     variant="ghost"
                     className="rounded-full h-9 w-9 text-muted-foreground hover:text-foreground"
