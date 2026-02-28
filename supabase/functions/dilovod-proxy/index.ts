@@ -20,14 +20,15 @@ const DOC_MODE = {
 
 async function callDilovod(apiKey: string, action: string, params: Record<string, unknown>) {
   const packet = { version: DILOVOD_VERSION, key: apiKey, action, params };
-  console.log(`[dilovod-proxy] calling action=${action}`);
+  console.log(`[dilovod-proxy] calling action=${action}`, JSON.stringify(params).slice(0, 300));
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
   try {
+    const packetJson = JSON.stringify(packet);
     const res = await fetch(DILOVOD_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(packet),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "packet=" + encodeURIComponent(packetJson),
       signal: controller.signal,
     });
     if (!res.ok) {
@@ -67,14 +68,24 @@ async function rollbackChain(apiKey: string, chainIds: Record<string, string>) {
 function extractId(result: any): string {
   if (typeof result === "string") return result;
   if (typeof result === "number") return String(result);
-  // Try common patterns from Dilovod API responses
+  
+  // Dilovod returns: { status: "success", data: { header: { id: { id: "...", pr: "..." } } } }
+  const dataHeaderId = result?.data?.header?.id;
+  if (dataHeaderId) {
+    if (typeof dataHeaderId === "object" && dataHeaderId.id) return String(dataHeaderId.id);
+    if (typeof dataHeaderId === "string") return dataHeaderId;
+    if (typeof dataHeaderId === "number") return String(dataHeaderId);
+  }
+  
+  // Fallback patterns
   const id = result?.result?.id || result?.id || result?.result?.header?.id;
+  if (id && typeof id === "object" && id.id) return String(id.id);
   if (id && typeof id === "string") return id;
   if (id && typeof id === "number") return String(id);
-  // If result.result is a string/number (direct ID)
   if (typeof result?.result === "string") return result.result;
   if (typeof result?.result === "number") return String(result.result);
-  console.warn("[extractId] Could not extract ID from:", JSON.stringify(result).slice(0, 200));
+  
+  console.warn("[extractId] Could not extract ID from:", JSON.stringify(result).slice(0, 300));
   return "";
 }
 
@@ -264,8 +275,14 @@ serve(async (req) => {
         const draft = params.draft || params;
         const chainIds: Record<string, string> = {};
         
-        // Convert date string "2026-02-28" to datetime format "2026-02-28T00:00:00"
-        const docDate = draft.date && !draft.date.includes("T") ? `${draft.date}T00:00:00` : draft.date;
+        // Convert date to Dilovod format "YYYY-MM-DD HH:MM:SS" (space, not T)
+        let docDate = draft.date || "";
+        if (docDate && !docDate.includes(" ") && !docDate.includes("T")) {
+          docDate = `${docDate} 00:00:00`;
+        } else if (docDate && docDate.includes("T")) {
+          docDate = docDate.replace("T", " ");
+          if (docDate.length === 11) docDate += "00:00:00"; // "2026-02-28 " edge case
+        }
         
         // Normalize item field names: frontend sends itemId, proxy uses dilovod_id
         const normalizedItems = (draft.items || []).map((i: any) => ({
@@ -286,30 +303,41 @@ serve(async (req) => {
               },
             });
             chainIds.order_id = extractId(order);
+            // Extract firm and currency from order response for subsequent docs
+            const orderHeader = order?.data?.header || {};
+            const orderFirm = draft.firmId || (typeof orderHeader.firm === "object" ? orderHeader.firm?.id : orderHeader.firm);
+            const orderCurrency = draft.currency || (typeof orderHeader.currency === "object" ? orderHeader.currency?.id : orderHeader.currency);
+            const orderStorage = typeof orderHeader.storage === "object" ? orderHeader.storage?.id : orderHeader.storage;
+            const orderPriceType = typeof orderHeader.priceType === "object" ? orderHeader.priceType?.id : orderHeader.priceType;
+            console.log(`[createChain] order created, id=${chainIds.order_id}, firm=${orderFirm}, currency=${orderCurrency}`);
 
             // Step 2: Customer Invoice (documents.saleInvoice)
-            console.log(`[createChain] order created, id=${chainIds.order_id}`);
-            const invoice = await callDilovod(apiKey, "saveObject", {
-              saveType: 1,
-              header: {
-                id: "documents.saleInvoice",
-                ...(draft.firmId ? { firm: draft.firmId } : {}),
-                person: draft.counterpartyId,
-                date: docDate,
-                baseDoc: chainIds.order_id,
-              },
-              tableParts: {
-                tpGoods: normalizedItems.map((i: any, idx: number) => ({
-                  rowNum: idx + 1,
-                  good: i.dilovod_id,
-                  qty: i.qty,
-                  price: i.price,
-                  amountCur: i.total || i.qty * i.price,
-                })),
-              },
-            });
-            chainIds.invoice_id = extractId(invoice);
-            console.log(`[createChain] invoice created, id=${chainIds.invoice_id}`);
+            if (chainIds.order_id) {
+              const invoice = await callDilovod(apiKey, "saveObject", {
+                saveType: 1,
+                header: {
+                  id: "documents.saleInvoice",
+                  ...(orderFirm ? { firm: orderFirm } : {}),
+                  ...(orderCurrency ? { currency: orderCurrency } : {}),
+                  ...(orderStorage ? { storage: orderStorage } : {}),
+                  ...(orderPriceType ? { priceType: orderPriceType } : {}),
+                  person: draft.counterpartyId,
+                  date: docDate,
+                  baseDoc: chainIds.order_id,
+                },
+                tableParts: {
+                  tpGoods: normalizedItems.map((i: any, idx: number) => ({
+                    rowNum: idx + 1,
+                    good: i.dilovod_id,
+                    qty: i.qty,
+                    price: i.price,
+                    amountCur: i.total || i.qty * i.price,
+                  })),
+                },
+              });
+              chainIds.invoice_id = extractId(invoice);
+              console.log(`[createChain] invoice created, id=${chainIds.invoice_id}`);
+            }
 
           } else if (actionType === "sales.commission") {
             const order = await callDilovod(apiKey, "call", {
