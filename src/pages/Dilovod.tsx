@@ -62,6 +62,8 @@ const Dilovod = () => {
     loadSession,
     startNewChat,
     saveMessage,
+    ensureSessionId,
+    refreshSessions,
   } = useChatSessions();
 
   const [input, setInput] = useState("");
@@ -134,26 +136,32 @@ const Dilovod = () => {
 
     const userContent = text || (file ? `📎 ${file.name}` : "");
 
-    await saveMessage({
-      role: "user",
-      content: userContent,
-      metadata: file
-        ? { fileName: file.name, actionType: selectedAction || undefined }
-        : selectedAction
-        ? { actionType: selectedAction }
-        : undefined,
-    });
-
-    const historyForAI = [
-      ...messagesRef.current
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-      { role: "user" as const, content: userContent },
-    ];
-
-    let assistantSoFar = "";
-
     try {
+      // Lock session id for this entire send flow
+      const sessionId = await ensureSessionId();
+
+      await saveMessage(
+        {
+          role: "user",
+          content: userContent,
+          metadata: file
+            ? { fileName: file.name, actionType: selectedAction || undefined }
+            : selectedAction
+            ? { actionType: selectedAction }
+            : undefined,
+        },
+        sessionId
+      );
+
+      const historyForAI = [
+        ...messagesRef.current
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+        { role: "user" as const, content: userContent },
+      ];
+
+      let assistantSoFar = "";
+
       await streamChat({
         messages: historyForAI,
         actionType: selectedAction,
@@ -184,94 +192,91 @@ const Dilovod = () => {
             prev.filter((m) => !m.id.startsWith("streaming-"))
           );
 
-          if (!assistantSoFar) {
-            setIsProcessing(false);
-            sendingRef.current = false;
-            return;
-          }
+          if (!assistantSoFar) return;
 
-          // Check if AI response contains a draft JSON
+          // Save assistant text immediately (unblock UI)
+          const { msg: savedMsg } = await saveMessage(
+            { role: "assistant", content: assistantSoFar },
+            sessionId
+          );
+
+          // Refresh sessions list (to update sidebar title)
+          refreshSessions();
+
+          // Check for draft and resolve in background (non-blocking)
           const parsedDraft = parseDraftFromText(assistantSoFar);
-
           if (parsedDraft) {
-            // Show resolving indicator
-            const resolvingId = `resolving-${Date.now()}`;
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: resolvingId,
-                role: "assistant" as const,
-                content: assistantSoFar,
-                metadata: { type: "resolving", resolvingStatus: "🔍 Пошук у каталозі Діловод..." },
-                created_at: new Date().toISOString(),
-              },
-            ]);
+            // Show resolving indicator by updating the saved message metadata
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === savedMsg.id
+                  ? { ...m, metadata: { type: "resolving" as const, resolvingStatus: "🔍 Пошук у каталозі Діловод..." } }
+                  : m
+              )
+            );
 
             try {
-              const resolvePromise = resolveDraft(parsedDraft);
-              const timeoutPromise = new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error("Resolution timeout")), 15000)
+              const { draft, disambiguations, isFullyResolved } = await Promise.race([
+                resolveDraft(parsedDraft),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error("Resolution timeout")), 15000)
+                ),
+              ]);
+
+              // Update message metadata with resolved draft
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === savedMsg.id
+                    ? {
+                        ...m,
+                        metadata: {
+                          type: isFullyResolved ? "draft" as const : "disambiguation" as const,
+                          draft,
+                          disambiguations: isFullyResolved ? undefined : disambiguations,
+                        },
+                      }
+                    : m
+                )
               );
-              const { draft, disambiguations, isFullyResolved } = await Promise.race([resolvePromise, timeoutPromise]);
-
-              // Remove resolving placeholder
-              setMessages((prev) => prev.filter((m) => m.id !== resolvingId));
-
-              await saveMessage({
-                role: "assistant",
-                content: assistantSoFar,
-                metadata: {
-                  type: isFullyResolved ? "draft" : "disambiguation",
-                  draft,
-                  disambiguations: isFullyResolved ? undefined : disambiguations,
-                },
-              });
             } catch (err) {
               console.error("Draft resolution failed:", err);
-              setMessages((prev) => prev.filter((m) => m.id !== resolvingId));
+              // Revert to plain text display
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === savedMsg.id
+                    ? { ...m, metadata: undefined }
+                    : m
+                )
+              );
               toast.error("Не вдалося знайти товари в каталозі. Відповідь збережено як текст.");
-              await saveMessage({
-                role: "assistant",
-                content: assistantSoFar,
-              });
             }
-          } else {
-            await saveMessage({
-              role: "assistant",
-              content: assistantSoFar,
-            });
           }
-
-          setIsProcessing(false);
-          sendingRef.current = false;
         },
         onError: (error) => {
           toast.error(error);
-          setIsProcessing(false);
-          sendingRef.current = false;
         },
       });
     } catch (e) {
-      console.error("Stream error:", e);
+      console.error("Send error:", e);
       toast.error("Помилка з'єднання з AI");
+    } finally {
       setIsProcessing(false);
       sendingRef.current = false;
     }
-  }, [input, uploadedFile, selectedAction, saveMessage, setMessages]);
+  }, [input, uploadedFile, selectedAction, saveMessage, setMessages, ensureSessionId, refreshSessions]);
 
   const handleFileSelect = async (file: File) => {
     setUploadedFile(file);
-    await saveMessage({
-      role: "user",
-      content: `📎 Завантажено: ${file.name}`,
-      metadata: { fileName: file.name },
-    });
+    const sessionId = await ensureSessionId();
+    await saveMessage(
+      { role: "user", content: `📎 Завантажено: ${file.name}`, metadata: { fileName: file.name } },
+      sessionId
+    );
     if (!selectedAction) {
-      await saveMessage({
-        role: "assistant",
-        content: "Файл отримано. Оберіть тип операції або опишіть що потрібно зробити:",
-        metadata: { type: "text" },
-      });
+      await saveMessage(
+        { role: "assistant", content: "Файл отримано. Оберіть тип операції або опишіть що потрібно зробити:", metadata: { type: "text" } },
+        sessionId
+      );
     }
   };
 

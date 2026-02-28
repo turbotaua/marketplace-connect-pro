@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { ChatMessage } from "@/pages/Dilovod";
 
@@ -6,7 +6,7 @@ export interface ChatSession {
   id: string;
   created_at: string;
   last_active_at: string;
-  title?: string; // derived from first user message
+  title?: string;
 }
 
 export function useChatSessions() {
@@ -14,6 +14,12 @@ export function useChatSessions() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const sessionIdRef = useRef<string | null>(null);
+
+  // Keep ref in sync
+  useEffect(() => {
+    sessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
 
   // Fetch all sessions
   const fetchSessions = useCallback(async () => {
@@ -29,7 +35,7 @@ export function useChatSessions() {
 
     if (!sessionsData) return;
 
-    // For each session, get the first user message as title
+    // Get first user message per session as title
     const sessionIds = sessionsData.map((s) => s.id);
     const { data: firstMessages } = await supabase
       .from("dilovod_messages")
@@ -45,22 +51,39 @@ export function useChatSessions() {
       }
     });
 
-    setSessions(
-      sessionsData.map((s) => ({
+    // Filter out sessions without user messages
+    const validSessions = sessionsData
+      .filter((s) => titleMap.has(s.id))
+      .map((s) => ({
         ...s,
         title: titleMap.get(s.id) || "Нова розмова",
-      }))
-    );
+      }));
+
+    setSessions(validSessions);
+    return validSessions;
   }, []);
 
+  // Auto-load last active session on mount
   useEffect(() => {
-    fetchSessions();
-  }, [fetchSessions]);
+    let cancelled = false;
+    (async () => {
+      const loadedSessions = await fetchSessions();
+      if (cancelled || !loadedSessions || loadedSessions.length === 0) return;
+      // Auto-load the most recent session
+      const latest = loadedSessions[0];
+      if (latest && !sessionIdRef.current) {
+        await loadSessionById(latest.id);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load messages for a session
-  const loadSession = useCallback(async (sessionId: string) => {
+  const loadSessionById = useCallback(async (sessionId: string) => {
     setLoadingMessages(true);
     setCurrentSessionId(sessionId);
+    sessionIdRef.current = sessionId;
 
     const { data } = await supabase
       .from("dilovod_messages")
@@ -80,7 +103,7 @@ export function useChatSessions() {
     setLoadingMessages(false);
   }, []);
 
-  // Create a new session
+  // Create a new session (returns id, does NOT refresh sessions list)
   const createSession = useCallback(async (): Promise<string> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Not authenticated");
@@ -94,24 +117,28 @@ export function useChatSessions() {
     if (error) throw error;
 
     setCurrentSessionId(data.id);
+    sessionIdRef.current = data.id;
     setMessages([]);
-    await fetchSessions();
     return data.id;
-  }, [fetchSessions]);
+  }, []);
+
+  // Ensure we have a session id (create if needed)
+  const ensureSessionId = useCallback(async (): Promise<string> => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+    return createSession();
+  }, [createSession]);
 
   // Start new chat (reset state)
   const startNewChat = useCallback(() => {
     setCurrentSessionId(null);
+    sessionIdRef.current = null;
     setMessages([]);
   }, []);
 
-  // Save a message to the current session (creates session if needed)
+  // Save a message, using sessionIdOverride if provided
   const saveMessage = useCallback(
-    async (msg: Omit<ChatMessage, "id" | "created_at">) => {
-      let sessionId = currentSessionId;
-      if (!sessionId) {
-        sessionId = await createSession();
-      }
+    async (msg: Omit<ChatMessage, "id" | "created_at">, sessionIdOverride?: string) => {
+      const sessionId = sessionIdOverride || await ensureSessionId();
 
       const newMsg: ChatMessage = {
         ...msg,
@@ -135,15 +162,15 @@ export function useChatSessions() {
         .update({ last_active_at: new Date().toISOString() })
         .eq("id", sessionId);
 
-      // Refresh sessions list to update title/order
-      if (msg.role === "user") {
-        await fetchSessions();
-      }
-
-      return newMsg;
+      return { msg: newMsg, sessionId };
     },
-    [currentSessionId, createSession, fetchSessions]
+    [ensureSessionId]
   );
+
+  // Lightweight refresh of sessions list (call after send flow completes)
+  const refreshSessions = useCallback(async () => {
+    await fetchSessions();
+  }, [fetchSessions]);
 
   return {
     sessions,
@@ -151,9 +178,10 @@ export function useChatSessions() {
     messages,
     setMessages,
     loadingMessages,
-    loadSession,
+    loadSession: loadSessionById,
     startNewChat,
     saveMessage,
-    fetchSessions,
+    ensureSessionId,
+    refreshSessions,
   };
 }
