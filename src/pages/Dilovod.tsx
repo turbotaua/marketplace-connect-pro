@@ -354,10 +354,15 @@ const Dilovod = () => {
             } else {
               // Check if AI provided candidates for disambiguation
               const aiDisambiguations = extractDisambiguationsFromDraft(parsedDraft);
+              
+              // Check if AI already handled resolution (candidates array exists, even if empty)
+              const aiAlreadySearched = 
+                Array.isArray(parsedDraft.counterparty.candidates) &&
+                parsedDraft.items.every((i) => Array.isArray(i.candidates));
               const hasAiCandidates = aiDisambiguations.some((d) => d.candidates.length > 0);
 
-              if (hasAiCandidates) {
-                // AI provided candidates — show disambiguation directly, no client search needed
+              if (aiAlreadySearched || hasAiCandidates) {
+                // AI already searched — show disambiguation directly, no client search needed
                 const isFullyResolved = aiDisambiguations.length === 0;
                 setMessages((prev) =>
                   prev.map((m) =>

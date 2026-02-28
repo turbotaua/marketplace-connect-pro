@@ -90,8 +90,18 @@ export function extractDisambiguationsFromDraft(draft: DraftData): Disambiguatio
       candidates: draft.counterparty.candidates,
     });
     draft.counterparty.flagged = true;
+  } else if (!draft.counterparty.dilovod_id && Array.isArray(draft.counterparty.candidates)) {
+    // AI searched but found nothing (candidates is explicitly [])
+    // Don't mark as timedOut — AI already tried
+    draft.counterparty.flagged = true;
+    disambiguations.push({
+      field: "counterparty",
+      extractedName: draft.counterparty.extracted_name,
+      candidates: [],
+      timedOut: false,
+    });
   } else if (!draft.counterparty.dilovod_id) {
-    // No ID and no candidates — unresolved
+    // No ID and candidates field missing entirely — AI didn't search, needs client fallback
     draft.counterparty.flagged = true;
     disambiguations.push({
       field: "counterparty",
@@ -114,7 +124,18 @@ export function extractDisambiguationsFromDraft(draft: DraftData): Disambiguatio
         candidates: item.candidates,
       });
       item.flagged = true;
+    } else if (!item.dilovod_id && Array.isArray(item.candidates)) {
+      // AI searched but found nothing
+      item.flagged = true;
+      disambiguations.push({
+        field: "item",
+        index: i,
+        extractedName: item.extracted_name,
+        candidates: [],
+        timedOut: false,
+      });
     } else if (!item.dilovod_id) {
+      // AI didn't search — needs client fallback
       item.flagged = true;
       disambiguations.push({
         field: "item",

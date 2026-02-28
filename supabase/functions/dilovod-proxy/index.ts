@@ -214,7 +214,7 @@ serve(async (req) => {
       case "getItemSuppliers": {
         const itemId = params.itemId;
         result = await callDilovod(apiKey, "request", {
-          from: "documents.buy",
+          from: "documents.purchase",
           fields: {
             id: "doc_id",
             person: "person",
