@@ -1,28 +1,30 @@
 
+Проблема зафіксована: у мережевих логах `searchCounterparty` двічі падає з `signal is aborted without reason` через клієнтський таймаут 12с. Тобто причина не в скорингу, а в недочеканому відповіді пошуку контрагента.
 
-## Problem
+1) `src/lib/draftResolver.ts`
+- Переробити `callProxy`:
+  - збільшити таймаут для пошуку контрагента до 60с (для інших дій залишити коротший),
+  - додати retry (мінімум 2 спроби) на `AbortError`/тимчасові помилки.
+- Прибрати конкурентні звернення до каталогу:
+  - у `resolveDraft` виконувати пошук послідовно: спочатку контрагент, потім товари;
+  - у `smartSearch` для контрагента зробити стратегії послідовними (не `Promise.all`), щоб не ламати API з однопотоковим обмеженням.
+- Не давати “фальшиве успішне” вирішення:
+  - якщо пошук не встиг/впав, повертати явний unresolved-стан з дисамбігуацією, але без auto-resolve.
 
-Two issues:
-1. **Search works but scoring is wrong for partial matches** — "зелень" finds "Зелень, Львів" via API (`%` operator), but `calculateMatchScore("зелень", "Зелень, Львів")` returns 0.9 which auto-resolves without asking. If there are multiple counterparties containing "зелень", user never sees them. The threshold (0.85) is too aggressive for short/partial queries.
-2. **Disambiguation UI is basic** — current `DisambiguationCard` uses plain buttons in a yellow-bordered card. User wants Lovable-style quiz cards: clean, inline, with radio-button feel.
+2) `src/pages/Dilovod.tsx`
+- Додати обробку timeout-unresolved після `resolveDraft`:
+  - якщо контрагент не знайдено через timeout, виконати 1 автоматичний повтор пошуку перед показом disambiguation.
+- Блокувати підтвердження draft, поки контрагент unresolved (включно з timeout-сценарієм).
 
-## Plan (2 files)
+3) `src/components/dilovod/ChatThread.tsx` + `src/components/dilovod/DisambiguationCard.tsx`
+- Для `counterparty` прибрати `onCreateNew` (щоб не ставити `__new__` і не обходити реальний пошук).
+- Для порожнього списку кандидатів показувати явний стан:
+  - “Пошук контрагента не встиг завершитися” + кнопка “Повторити пошук” (через callback у `Dilovod.tsx`).
 
-### 1. `src/lib/draftResolver.ts` — Smarter auto-resolve for short queries
-
-When the search query is significantly shorter than the best candidate's name (e.g. "зелень" vs "Зелень, Львів"), **always show disambiguation** instead of auto-resolving. This prevents silently picking the wrong counterparty when the user gave a partial name.
-
-Changes to `resolveField`:
-- If the normalized query is ≤ 1 word and there are multiple candidates, **always return disambiguation** regardless of score
-- Only auto-resolve single-word queries if there's exactly 1 candidate with score ≥ 0.9
-
-### 2. `src/components/dilovod/DisambiguationCard.tsx` — Quiz-style UI
-
-Redesign the disambiguation card to match a modern quiz/poll UI:
-- Clean white card with subtle border (no yellow warning color)
-- Question header: "Який контрагент?" / "Який товар?"
-- Radio-button style options with name, code, and match percentage as a subtle badge
-- Hover highlight, selected state
-- "Створити нового" as a text link at the bottom
-- Compact, inline in the chat bubble
-
+Технічні деталі
+- Цільовий результат: запит `зелень` має стабільно повертати існуючого контрагента `Зелень, Львів` (з `dilovod_id`) без ручних обхідних дій.
+- Причина регресії: 12с клієнтський таймаут + конкурентні запити при однопотоковому API.
+- Критерій приймання:
+  1) більше немає aborted `searchCounterparty` у типовому сценарії;
+  2) у draft показується повна назва контрагента з каталогу;
+  3) якщо даних кілька — показується quiz-вибір, якщо один — авто-вибір.
