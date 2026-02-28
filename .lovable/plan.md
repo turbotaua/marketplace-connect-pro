@@ -1,56 +1,42 @@
 
-План виправлення (коротко, по кроках)
 
-1) Зафіксувати прив’язку повідомлень до однієї сесії
-- `src/hooks/useChatSessions.ts`
-  - Додати `sessionIdRef` і використовувати його як single source of truth.
-  - Додати `ensureSessionId()`; `saveMessage()` приймає `sessionIdOverride`.
-  - Повернути з `saveMessage` також `sessionId`.
-  - Прибрати зайві `fetchSessions()` з `createSession()` і з кожного `saveMessage(user)` (лишити легкий refresh після завершення send-flow).
-  - Автозавантаження останньої сесії після refresh (щоб “нічого не зникало”).
+## Fix: Smart Search Normalization + Timeout Tuning
 
-2) Розблокувати UI: відповідь AI показувати одразу, резолв каталогу — у фоні
-- `src/pages/Dilovod.tsx`
-  - У `handleSend` зберігати `sessionId` один раз і передавати його у всі наступні `saveMessage`.
-  - У `onDone`:
-    - спочатку зберігати assistant-text (без очікування резолву),
-    - одразу вимикати `isProcessing` у `finally`,
-    - потім запускати `resolveDraft` у фоні і оновлювати metadata того ж assistant-повідомлення.
-  - Додати жорсткий `finally` для `sendingRef/isProcessing` у всіх гілках.
-  - Прибрати ризик дублю в `historyForAI` (не додавати той самий user текст двічі).
+### Root cause (confirmed by direct proxy test)
+- `POST /dilovod-proxy {"action":"searchItem","params":{"query":"каштан"}}` returns 10 results in ~3s
+- But draftResolver sends `"query":"Свічка Київські Каштани"` — too specific, and the 10s client timeout kills the request before Dilovod responds
 
-3) Зробити стрім стабільним і без “вічного крутиться”
-- `src/lib/streamChat.ts`
-  - Додати timeout/abort на запит і на “перший байт”.
-  - Дозволити `onDone: () => Promise<void> | void` і `await onDone()`.
-  - Єдиний шлях помилки: `onError(...)` + гарантоване завершення циклу.
+### Changes
 
-4) Каталог-резолв не має блокувати чат
-- `src/lib/draftResolver.ts`
-  - Лишити короткі timeouts, але помилки класифікувати як non-blocking.
-  - Якщо `searchCounterparty/searchItem` впав — не тримати спінер, а зберігати текстову відповідь + toast.
-  - Додати маркер “резолв не завершено” замість зависання.
+**1. `src/lib/draftResolver.ts` — Smart query normalization + multi-strategy search**
 
-5) Прибрати шумові React warning-и про refs
-- `src/components/dilovod/ChatThread.tsx`
-- `src/components/dilovod/FileUpload.tsx`
-  - Перевірити й прибрати передачу `ref` у функціональні компоненти (або перевести на `forwardRef`, де реально треба).
-  - Для markdown-рендеру прибрати джерело ref-передачі, щоб не засмічувати консоль.
+- Add `normalizeSearchQuery(query, type)`:
+  - Strip product-type prefixes: "свічка", "дифузор", "аромаспрей", "набір" etc.
+  - Strip quotes `«»""''`
+  - Trim, lowercase
+  - For items: extract the distinctive name part ("Київські Каштани")
+  
+- Replace single `searchCatalog()` call with `smartSearch()`:
+  - Strategy 1: search with normalized full name ("київські каштани")
+  - Strategy 2 (if 0 results): search with shortest distinctive word ("каштан") 
+  - Merge and deduplicate results
 
-6) Підчистити побічні артефакти зламаних спроб
-- `src/hooks/useChatSessions.ts` / sidebar-відображення
-  - Не показувати “порожні/биті” сесії без user-повідомлень.
-  - (Опційно) одноразово сховати orphan-сесії assistant-only.
+- Increase `callProxy` timeout from 10s → 20s (Dilovod API is genuinely slow)
+- Increase overall `resolveDraft` race timeout in Dilovod.tsx from 15s → 25s
 
-Технічні деталі (зафіксовані причини)
-- Є розсинхрон сесій: user та assistant інколи пишуться в різні `session_id`.
-- `saveMessage()` зараз може створювати нову сесію в середині того самого send-flow.
-- `onDone` асинхронний, але стрім-обгортка не чекає його завершення — це залишає спінер без cleanup при помилці.
-- `resolveDraft` запускається до завершення UI cleanup і подовжує блокування інтерфейсу.
-- Після refresh поточна сесія не піднімається автоматично — користувач бачить “все зникло”.
+**2. `src/pages/Dilovod.tsx` — Increase resolution timeout**
 
-Перевірка після імплементації
-- Один send => 1 user + 1 assistant в одному `session_id`.
-- Після refresh відкривається остання активна розмова з історією.
-- При падінні `dilovod-proxy` чат не зависає: текст AI лишається, є toast, можна одразу писати далі.
-- В консолі немає warning “Function components cannot be given refs”.
+- Change `Promise.race` timeout from 15000 → 25000ms
+
+**3. Scoring improvements in `draftResolver.ts`**
+
+- Normalize both query and candidate before comparison (strip type prefixes from candidate names too)
+- Auto-resolve threshold: if top candidate score ≥ 0.85 (keep existing) but also auto-resolve if only 1 candidate even at lower score (≥ 0.7)
+
+### Files
+
+| File | Change |
+|---|---|
+| `src/lib/draftResolver.ts` | Add `normalizeSearchQuery`, multi-strategy search, 20s timeout |
+| `src/pages/Dilovod.tsx` | Increase resolution timeout to 25s |
+
