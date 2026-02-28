@@ -83,12 +83,52 @@ export function parseDraftFromText(text: string): DraftData | null {
 
 const PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dilovod-proxy`;
 
+// Product-type prefixes to strip for better search
+const ITEM_TYPE_PREFIXES = [
+  "свічка", "свічки", "дифузор", "дифузори", "аромадифузор", "аромадифузори",
+  "аромаспрей", "аромасаше", "набір", "крем-свічка", "крем-свічки",
+  "формова свічка", "міні-свічка", "міні",
+];
+
+/**
+ * Normalize a search query by stripping product-type prefixes, quotes, and extra whitespace.
+ */
+function normalizeSearchQuery(query: string, type: "item" | "counterparty"): string {
+  let q = query
+    .replace(/['"«»„""''`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (type === "item") {
+    const lower = q.toLowerCase();
+    for (const prefix of ITEM_TYPE_PREFIXES) {
+      if (lower.startsWith(prefix + " ")) {
+        q = q.slice(prefix.length).trim();
+        break; // only strip one prefix
+      }
+    }
+  }
+
+  return q;
+}
+
+/**
+ * Extract distinctive words (3+ chars) from a query for fallback search.
+ */
+function getDistinctiveWords(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length >= 3)
+    .filter((w) => !ITEM_TYPE_PREFIXES.includes(w));
+}
+
 async function callProxy(action: string, params: Record<string, unknown>): Promise<any> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  const timeout = setTimeout(() => controller.abort(), 20000); // 20s timeout
   try {
     const res = await fetch(PROXY_URL, {
       method: "POST",
@@ -107,7 +147,7 @@ async function callProxy(action: string, params: Record<string, unknown>): Promi
     return res.json();
   } catch (e: any) {
     if (e.name === "AbortError") {
-      console.error(`Proxy timeout (10s) for ${action}`);
+      console.error(`Proxy timeout (20s) for ${action}`);
     } else {
       console.error(`Proxy fetch error for ${action}:`, e);
     }
@@ -122,8 +162,17 @@ function normalizeForCompare(s: string): string {
 }
 
 function calculateMatchScore(query: string, candidateName: string): number {
-  const q = normalizeForCompare(query);
-  const c = normalizeForCompare(candidateName);
+  // Normalize both sides — strip type prefixes from candidate too
+  let q = normalizeForCompare(query);
+  let c = normalizeForCompare(candidateName);
+
+  // Strip type prefixes from both for fair comparison
+  for (const prefix of ITEM_TYPE_PREFIXES) {
+    if (q.startsWith(prefix + " ")) { q = q.slice(prefix.length + 1); break; }
+  }
+  for (const prefix of ITEM_TYPE_PREFIXES) {
+    if (c.startsWith(prefix + " ")) { c = c.slice(prefix.length + 1); break; }
+  }
 
   if (c === q) return 1.0;
   if (c.includes(q)) return 0.9;
@@ -139,9 +188,9 @@ function calculateMatchScore(query: string, candidateName: string): number {
 }
 
 /**
- * Search for a single name in the Dilovod catalog
+ * Search for a single name in the Dilovod catalog (raw API call)
  */
-async function searchCatalog(
+async function searchCatalogRaw(
   type: "item" | "counterparty",
   query: string
 ): Promise<ResolvedCandidate[]> {
@@ -149,18 +198,59 @@ async function searchCatalog(
   const data = await callProxy(action, { query, limit: 10 });
   if (!data) return [];
 
-  // The proxy returns Dilovod "request" result — typically { result: [...] } or just [...]
   const rows: any[] = Array.isArray(data) ? data : data?.result || [];
 
   return rows.map((r: any) => ({
     id: r.id || r.item_id || r.person_id,
     name: r.name || r.item_name || r.person_name,
     code: r.code || r.item_code || r.person_code,
-    score: calculateMatchScore(query, r.name || r.item_name || r.person_name || ""),
   }));
 }
 
+/**
+ * Multi-strategy smart search:
+ * 1. Normalized full name
+ * 2. Fallback: individual distinctive words (if 0 results)
+ * Deduplicates and scores all results.
+ */
+async function smartSearch(
+  type: "item" | "counterparty",
+  originalQuery: string
+): Promise<ResolvedCandidate[]> {
+  const normalized = normalizeSearchQuery(originalQuery, type);
+  console.log(`[smartSearch] type=${type}, original="${originalQuery}", normalized="${normalized}"`);
+
+  // Strategy 1: search normalized full name
+  let candidates = await searchCatalogRaw(type, normalized);
+
+  // Strategy 2: fallback with distinctive words
+  if (candidates.length === 0 && type === "item") {
+    const words = getDistinctiveWords(normalized);
+    for (const word of words) {
+      console.log(`[smartSearch] fallback search with word: "${word}"`);
+      candidates = await searchCatalogRaw(type, word);
+      if (candidates.length > 0) break;
+    }
+  }
+
+  // Deduplicate by id
+  const seen = new Set<string>();
+  const unique: ResolvedCandidate[] = [];
+  for (const c of candidates) {
+    if (!seen.has(c.id)) {
+      seen.add(c.id);
+      unique.push({
+        ...c,
+        score: calculateMatchScore(originalQuery, c.name || ""),
+      });
+    }
+  }
+
+  return unique.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+}
+
 const AUTO_RESOLVE_THRESHOLD = 0.85;
+const SINGLE_CANDIDATE_THRESHOLD = 0.7;
 
 /**
  * Resolve all extracted names in a draft against Dilovod catalog.
@@ -172,10 +262,13 @@ export async function resolveDraft(draft: DraftData): Promise<ResolveResult> {
 
   // Resolve counterparty
   if (!resolvedDraft.counterparty.dilovod_id) {
-    const candidates = await searchCatalog("counterparty", resolvedDraft.counterparty.extracted_name);
-    const sorted = candidates.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const sorted = await smartSearch("counterparty", resolvedDraft.counterparty.extracted_name);
 
-    if (sorted.length === 1 && (sorted[0].score ?? 0) >= AUTO_RESOLVE_THRESHOLD) {
+    if (sorted.length === 1 && (sorted[0].score ?? 0) >= SINGLE_CANDIDATE_THRESHOLD) {
+      resolvedDraft.counterparty.dilovod_id = sorted[0].id;
+      resolvedDraft.counterparty.dilovod_name = sorted[0].name;
+      resolvedDraft.counterparty.flagged = false;
+    } else if (sorted.length > 0 && (sorted[0].score ?? 0) >= AUTO_RESOLVE_THRESHOLD) {
       resolvedDraft.counterparty.dilovod_id = sorted[0].id;
       resolvedDraft.counterparty.dilovod_name = sorted[0].name;
       resolvedDraft.counterparty.flagged = false;
@@ -198,12 +291,15 @@ export async function resolveDraft(draft: DraftData): Promise<ResolveResult> {
 
   // Resolve items in parallel
   const itemPromises = resolvedDraft.items.map(async (item, index) => {
-    if (item.dilovod_id) return; // already resolved
+    if (item.dilovod_id) return;
 
-    const candidates = await searchCatalog("item", item.extracted_name);
-    const sorted = candidates.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const sorted = await smartSearch("item", item.extracted_name);
 
-    if (sorted.length === 1 && (sorted[0].score ?? 0) >= AUTO_RESOLVE_THRESHOLD) {
+    if (sorted.length === 1 && (sorted[0].score ?? 0) >= SINGLE_CANDIDATE_THRESHOLD) {
+      item.dilovod_id = sorted[0].id;
+      item.dilovod_name = sorted[0].name;
+      item.flagged = false;
+    } else if (sorted.length > 0 && (sorted[0].score ?? 0) >= AUTO_RESOLVE_THRESHOLD) {
       item.dilovod_id = sorted[0].id;
       item.dilovod_name = sorted[0].name;
       item.flagged = false;
