@@ -146,34 +146,44 @@ async function callProxy(action: string, params: Record<string, unknown>): Promi
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000); // 20s timeout
-  try {
-    const res = await fetch(PROXY_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ action, params }),
-      signal: controller.signal,
-    });
+  const doFetch = async (): Promise<any> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 35000); // 35s timeout
+    try {
+      const res = await fetch(PROXY_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action, params }),
+        signal: controller.signal,
+      });
 
-    if (!res.ok) {
-      console.error(`Proxy error ${res.status} for ${action}`);
+      if (!res.ok) {
+        console.error(`Proxy error ${res.status} for ${action}`);
+        return null;
+      }
+      return res.json();
+    } catch (e: any) {
+      if (e.name === "AbortError") {
+        console.error(`Proxy timeout (35s) for ${action}`);
+      } else {
+        console.error(`Proxy fetch error for ${action}:`, e);
+      }
       return null;
+    } finally {
+      clearTimeout(timeout);
     }
-    return res.json();
-  } catch (e: any) {
-    if (e.name === "AbortError") {
-      console.error(`Proxy timeout (20s) for ${action}`);
-    } else {
-      console.error(`Proxy fetch error for ${action}:`, e);
-    }
-    return null;
-  } finally {
-    clearTimeout(timeout);
+  };
+
+  // Try once, retry on null (timeout/error)
+  let result = await doFetch();
+  if (result === null) {
+    console.log(`[callProxy] Retrying ${action}...`);
+    result = await doFetch();
   }
+  return result;
 }
 
 function normalizeForCompare(s: string): string {
@@ -307,9 +317,10 @@ export async function resolveDraft(draft: DraftData): Promise<ResolveResult> {
     }
   }
 
-  // Resolve items in parallel
-  const itemPromises = resolvedDraft.items.map(async (item, index) => {
-    if (item.dilovod_id) return;
+  // Resolve items SEQUENTIALLY to avoid overwhelming the Dilovod API
+  for (let index = 0; index < resolvedDraft.items.length; index++) {
+    const item = resolvedDraft.items[index];
+    if (item.dilovod_id) continue;
 
     const sorted = await smartSearch("item", item.extracted_name);
 
@@ -338,9 +349,7 @@ export async function resolveDraft(draft: DraftData): Promise<ResolveResult> {
         candidates: [],
       });
     }
-  });
-
-  await Promise.all(itemPromises);
+  }
 
   return {
     draft: resolvedDraft,
