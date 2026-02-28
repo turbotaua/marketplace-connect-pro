@@ -22,7 +22,7 @@ async function callDilovod(apiKey: string, action: string, params: Record<string
   const packet = { version: DILOVOD_VERSION, key: apiKey, action, params };
   console.log(`[dilovod-proxy] calling action=${action}`);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 25000);
   try {
     const res = await fetch(DILOVOD_URL, {
       method: "POST",
@@ -41,7 +41,7 @@ async function callDilovod(apiKey: string, action: string, params: Record<string
     return data;
   } catch (e) {
     if (e.name === "AbortError") {
-      throw new Error(`Dilovod API timeout after 15s for action=${action}`);
+      throw new Error(`Dilovod API timeout after 25s for action=${action}`);
     }
     throw e;
   } finally {

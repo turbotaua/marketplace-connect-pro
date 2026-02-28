@@ -296,7 +296,7 @@ const Dilovod = () => {
               const { draft, disambiguations, isFullyResolved } = await Promise.race([
                 resolveDraft(parsedDraft),
                 new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error("Resolution timeout")), 25000)
+                  setTimeout(() => reject(new Error("Resolution timeout")), 60000)
                 ),
               ]);
 
