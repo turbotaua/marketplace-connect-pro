@@ -1,42 +1,56 @@
 
+План виправлення (коротко, по кроках)
 
-## Problem Analysis
+1) Зафіксувати прив’язку повідомлень до однієї сесії
+- `src/hooks/useChatSessions.ts`
+  - Додати `sessionIdRef` і використовувати його як single source of truth.
+  - Додати `ensureSessionId()`; `saveMessage()` приймає `sessionIdOverride`.
+  - Повернути з `saveMessage` також `sessionId`.
+  - Прибрати зайві `fetchSessions()` з `createSession()` і з кожного `saveMessage(user)` (лишити легкий refresh після завершення send-flow).
+  - Автозавантаження останньої сесії після refresh (щоб “нічого не зникало”).
 
-From the screenshot and network logs, I identified two bugs:
+2) Розблокувати UI: відповідь AI показувати одразу, резолв каталогу — у фоні
+- `src/pages/Dilovod.tsx`
+  - У `handleSend` зберігати `sessionId` один раз і передавати його у всі наступні `saveMessage`.
+  - У `onDone`:
+    - спочатку зберігати assistant-text (без очікування резолву),
+    - одразу вимикати `isProcessing` у `finally`,
+    - потім запускати `resolveDraft` у фоні і оновлювати metadata того ж assistant-повідомлення.
+  - Додати жорсткий `finally` для `sendingRef/isProcessing` у всіх гілках.
+  - Прибрати ризик дублю в `historyForAI` (не додавати той самий user текст двічі).
 
-1. **Duplicate messages sent**: Two identical POST requests fire to `dilovod-chat` simultaneously. The `handleSend` callback depends on `messages` in its dependency array, but `saveMessage` mutates `messages` — causing React to re-create the callback mid-execution, leading to double invocation.
+3) Зробити стрім стабільним і без “вічного крутиться”
+- `src/lib/streamChat.ts`
+  - Додати timeout/abort на запит і на “перший байт”.
+  - Дозволити `onDone: () => Promise<void> | void` і `await onDone()`.
+  - Єдиний шлях помилки: `onError(...)` + гарантоване завершення циклу.
 
-2. **Infinite spinner after AI responds**: The AI response streams back fine (200 OK), but then `resolveDraft()` calls `dilovod-proxy` → external Dilovod API with **no timeout**. If the API is slow or unresponsive, the spinner stays forever. There's also no error handling visible to the user.
+4) Каталог-резолв не має блокувати чат
+- `src/lib/draftResolver.ts`
+  - Лишити короткі timeouts, але помилки класифікувати як non-blocking.
+  - Якщо `searchCounterparty/searchItem` впав — не тримати спінер, а зберігати текстову відповідь + toast.
+  - Додати маркер “резолв не завершено” замість зависання.
 
-## Fix Plan
+5) Прибрати шумові React warning-и про refs
+- `src/components/dilovod/ChatThread.tsx`
+- `src/components/dilovod/FileUpload.tsx`
+  - Перевірити й прибрати передачу `ref` у функціональні компоненти (або перевести на `forwardRef`, де реально треба).
+  - Для markdown-рендеру прибрати джерело ref-передачі, щоб не засмічувати консоль.
 
-### 1. Fix duplicate sends in `Dilovod.tsx`
+6) Підчистити побічні артефакти зламаних спроб
+- `src/hooks/useChatSessions.ts` / sidebar-відображення
+  - Не показувати “порожні/биті” сесії без user-повідомлень.
+  - (Опційно) одноразово сховати orphan-сесії assistant-only.
 
-- Use a `useRef` for the processing flag instead of `useState` — refs don't cause re-renders and can't go stale in closures
-- Remove `messages` from `handleSend` dependency array — capture current messages via `setMessages` callback or a ref
-- Add a `sendingRef` that's checked synchronously to prevent double-entry
+Технічні деталі (зафіксовані причини)
+- Є розсинхрон сесій: user та assistant інколи пишуться в різні `session_id`.
+- `saveMessage()` зараз може створювати нову сесію в середині того самого send-flow.
+- `onDone` асинхронний, але стрім-обгортка не чекає його завершення — це залишає спінер без cleanup при помилці.
+- `resolveDraft` запускається до завершення UI cleanup і подовжує блокування інтерфейсу.
+- Після refresh поточна сесія не піднімається автоматично — користувач бачить “все зникло”.
 
-### 2. Add timeout to `draftResolver.ts`
-
-- Wrap each `callProxy` fetch with `AbortController` + 10s timeout
-- If proxy times out, return empty candidates (don't block the entire flow)
-- Add overall `resolveDraft` timeout of 15s — if exceeded, save message as plain text
-
-### 3. Add timeout to `callDilovod` in `dilovod-proxy/index.ts`
-
-- Add `AbortController` with 15s timeout to the external Dilovod API fetch
-- Return a clear error message on timeout
-
-### 4. Better error feedback in `Dilovod.tsx`
-
-- If `resolveDraft` fails or times out, show toast with message and save assistant response as plain text (not lost)
-- Ensure `setIsProcessing(false)` is called in all error paths
-
-### Files to Change
-
-| File | Change |
-|---|---|
-| `src/pages/Dilovod.tsx` | Use ref for processing guard, fix `handleSend` deps to prevent double-fire |
-| `src/lib/draftResolver.ts` | Add 10s timeout per proxy call, 15s overall timeout |
-| `supabase/functions/dilovod-proxy/index.ts` | Add 15s timeout to `callDilovod` fetch |
-
+Перевірка після імплементації
+- Один send => 1 user + 1 assistant в одному `session_id`.
+- Після refresh відкривається остання активна розмова з історією.
+- При падінні `dilovod-proxy` чат не зависає: текст AI лишається, є toast, можна одразу писати далі.
+- В консолі немає warning “Function components cannot be given refs”.
