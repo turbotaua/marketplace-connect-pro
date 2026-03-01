@@ -84,7 +84,7 @@ const AdminLayout = ({
     <div className="flex min-h-screen w-full">
       <aside
         className={cn(
-          "flex flex-col border-r border-sidebar-border bg-sidebar transition-all duration-300 ease-in-out",
+          "flex flex-col h-screen sticky top-0 border-r border-sidebar-border bg-sidebar transition-all duration-300 ease-in-out",
           sidebarOpen ? "w-64" : "w-0 overflow-hidden border-r-0"
         )}
       >
