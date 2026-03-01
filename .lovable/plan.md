@@ -1,19 +1,51 @@
 
+Ок, причина вже чітка: інструменти працюють, але поточний пошук занадто буквальний.
 
-## Problem
+Що підтверджено по факту:
+- `search_counterparty` і `search_item` **викликаються**.
+- Помилок/таймаутів у цьому кейсі немає.
+- Обидва повертають `[]` саме для повних фраз:
+  - `ТОВ Найкращі Подарунки`
+  - `свічка 250мл лісова пісня`
+- Ті самі дані знаходяться, якщо запит коротший/нормалізований:
+  - `Найкращі` → є контрагенти
+  - `лісова пісня` або `свічка` → є товари
 
-The sidebar `<aside>` has no fixed height constraint. It uses `min-h-screen` on the parent but the aside itself grows with content. The `ScrollArea` with `flex-1` only works if the parent has a bounded height.
+Отже регрес не в “виклику інструментів”, а в стратегії пошуку (single-pass `%query%` без fallback).
 
-## Fix
+План виправлення:
 
-One line change in `AdminLayout.tsx` line 87: add `h-screen` and `overflow-hidden` to the aside so the flex column is bounded and `ScrollArea` scrolls internally instead of expanding the sidebar.
+1) Посилити пошук у `dilovod-proxy` (головний фікс)
+- Файл: `supabase/functions/dilovod-proxy/index.ts`
+- Для `searchCounterparty` і `searchItem` додати багатокроковий fallback **в межах одного виклику**:
+  - спроба 1: оригінальний запит;
+  - спроба 2: нормалізований (лапки/зайві символи/подвійні пробіли, `250мл` → `250 мл`);
+  - спроба 3: “ядро” запиту (без `ТОВ/ФОП`, без службових слів);
+  - спроба 4: ключові токени (по словах) з об’єднанням результатів.
+- Результати дедуплікувати по `id`, відсортувати за score (overlap слів), повернути top N.
+- Всі fallback-спроби робити послідовно (API однопотокове).
 
-```
-// Line 87, change:
-"flex flex-col border-r border-sidebar-border bg-sidebar transition-all duration-300 ease-in-out"
-// to:
-"flex flex-col h-screen sticky top-0 border-r border-sidebar-border bg-sidebar transition-all duration-300 ease-in-out"
-```
+2) Підправити інструкції агента, щоб не здавався після першого `[]`
+- Файл: `supabase/functions/dilovod-chat/index.ts` (SYSTEM_PROMPT, секція режиму документів)
+- Додати правило:
+  - перед висновком “не знайдено” агент зобов’язаний зробити 2–3 варіанти запиту (повний → очищений → ключові слова).
+  - лише після цього повідомляти про відсутність.
 
-This makes the sidebar exactly viewport height and sticky, so the chat list scrolls inside `ScrollArea` while brand, tools, and user footer stay pinned.
+3) Додати діагностичні логи по пошуку
+- Файл: `supabase/functions/dilovod-proxy/index.ts`
+- Логувати: які варіанти запиту пробувалися і скільки записів дала кожна спроба.
+- Це дасть швидку діагностику без здогадок у майбутньому.
 
+4) Перевірка після змін (обов’язково)
+- Кейс користувача:
+  - `створи замовлення покупця ТОВ Найкращі Подарунки на 1 свічку 250мл лісова пісня`
+- Очікування:
+  - знаходиться контрагент (або список кандидатів),
+  - знаходиться товар (або список кандидатів),
+  - формується draft, а не “не знайдено” одразу.
+- Додатково перевірити, що аналітичні запити не деградували.
+
+Технічні деталі (коротко):
+- Змінюємо лише edge functions (`dilovod-proxy`, `dilovod-chat`), без змін БД.
+- Поточну модель можна залишити; головна проблема в пошуковому пайплайні, не в транспорті чи таймаутах.
+- Після цього “людські” фрази з перестановкою слів і варіаціями назв знову працюватимуть стабільно.
