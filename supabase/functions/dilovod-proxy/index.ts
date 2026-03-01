@@ -89,6 +89,111 @@ function extractId(result: any): string {
   return "";
 }
 
+// ─── Smart Search with multi-step fallback ───────────────────────────────────
+
+// Legal prefixes and stop words to strip for "core" query
+const LEGAL_PREFIXES = /^(тов|товариство|фоп|пп|ат|пат|зат|ооо|пбоюл|ип)\b\.?\s*/i;
+const STOP_WORDS = new Set(["з", "о.о.", "обмеженою", "відповідальністю", "та", "і", "на", "для", "в", "у"]);
+
+function normalizeQuery(q: string): string {
+  // Remove quotes, normalize spaces around units (250мл → 250 мл)
+  return q
+    .replace(/[""«»'']/g, "")
+    .replace(/(\d)(мл|л|г|кг|мм|см|м|шт)/gi, "$1 $2")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function coreQuery(q: string): string {
+  // Strip legal prefixes and stop words
+  let core = q.replace(LEGAL_PREFIXES, "").trim();
+  const words = core.split(/\s+/).filter(w => !STOP_WORDS.has(w.toLowerCase()) && w.length > 1);
+  return words.join(" ");
+}
+
+function tokenize(q: string): string[] {
+  return q.split(/\s+/).filter(w => w.length >= 2);
+}
+
+type SearchRow = Record<string, unknown>;
+
+async function smartSearch(
+  apiKey: string,
+  from: string,
+  fields: Record<string, string>,
+  nameAlias: string,
+  rawQuery: string,
+  limit: number,
+): Promise<unknown> {
+  if (!rawQuery) {
+    return await callDilovod(apiKey, "request", { from, fields, filters: [], limit });
+  }
+
+  const attempts: { label: string; query: string }[] = [];
+
+  // Step 1: original
+  attempts.push({ label: "original", query: rawQuery });
+
+  // Step 2: normalized
+  const normalized = normalizeQuery(rawQuery);
+  if (normalized !== rawQuery) {
+    attempts.push({ label: "normalized", query: normalized });
+  }
+
+  // Step 3: core (strip legal prefixes + stop words)
+  const core = coreQuery(normalized);
+  if (core && core !== normalized && core !== rawQuery) {
+    attempts.push({ label: "core", query: core });
+  }
+
+  // Step 4: individual tokens (longest first, skip if ≤1 meaningful token)
+  const tokens = tokenize(core || normalized);
+  if (tokens.length > 1) {
+    // Try each token individually; we'll merge results
+    for (const token of tokens.sort((a, b) => b.length - a.length).slice(0, 3)) {
+      attempts.push({ label: `token:${token}`, query: token });
+    }
+  }
+
+  const seenIds = new Set<string>();
+  const allResults: SearchRow[] = [];
+
+  for (const attempt of attempts) {
+    try {
+      const res = await callDilovod(apiKey, "request", {
+        from,
+        fields,
+        filters: [{ alias: nameAlias, operator: "%", value: attempt.query }],
+        limit: limit,
+      });
+
+      const rows: SearchRow[] = (res as any)?.result || (Array.isArray(res) ? res : []);
+      let added = 0;
+      for (const row of rows) {
+        const id = String((row as any).person_id || (row as any).item_id || (row as any).id || "");
+        if (id && !seenIds.has(id)) {
+          seenIds.add(id);
+          allResults.push(row);
+          added++;
+        }
+      }
+      console.log(`[smartSearch] attempt="${attempt.label}" query="${attempt.query}" → ${rows.length} raw, ${added} new (total ${allResults.length})`);
+
+      // If original or normalized already found results, no need for further fallback
+      if (allResults.length >= limit && (attempt.label === "original" || attempt.label === "normalized")) {
+        break;
+      }
+      // If we have enough results after core, skip tokens
+      if (allResults.length >= limit) break;
+    } catch (e) {
+      console.warn(`[smartSearch] attempt="${attempt.label}" failed:`, e);
+    }
+  }
+
+  // Return in same format Dilovod returns
+  return { result: allResults.slice(0, limit) };
+}
+
 // Cache helpers
 async function getCached(supabase: any, key: string) {
   const { data } = await supabase
@@ -143,35 +248,27 @@ serve(async (req) => {
         break;
       }
 
-      // Search counterparties (catalogs.persons)
+      // Search counterparties (catalogs.persons) — multi-step fallback
       case "searchCounterparty": {
-        const query = params.query || "";
-        const filters: Record<string, unknown>[] = [];
-        if (query) {
-          filters.push({ alias: "person_name", operator: "%", value: query });
-        }
-        result = await callDilovod(apiKey, "request", {
-          from: "catalogs.persons",
-          fields: { id: "person_id", name: "person_name", code: "person_code" },
-          filters,
-          limit: params.limit || 20,
-        });
+        const query = (params.query || "").trim();
+        const limit = params.limit || 20;
+        const catalogFrom = "catalogs.persons";
+        const fields = { id: "person_id", name: "person_name", code: "person_code" };
+        const nameAlias = "person_name";
+
+        result = await smartSearch(apiKey, catalogFrom, fields, nameAlias, query, limit);
         break;
       }
 
-      // Search items (catalogs.goods)
+      // Search items (catalogs.goods) — multi-step fallback
       case "searchItem": {
-        const query = params.query || "";
-        const filters: Record<string, unknown>[] = [];
-        if (query) {
-          filters.push({ alias: "item_name", operator: "%", value: query });
-        }
-        result = await callDilovod(apiKey, "request", {
-          from: "catalogs.goods",
-          fields: { id: "item_id", name: "item_name", code: "item_code" },
-          filters,
-          limit: params.limit || 20,
-        });
+        const query = (params.query || "").trim();
+        const limit = params.limit || 20;
+        const catalogFrom = "catalogs.goods";
+        const fields = { id: "item_id", name: "item_name", code: "item_code" };
+        const nameAlias = "item_name";
+
+        result = await smartSearch(apiKey, catalogFrom, fields, nameAlias, query, limit);
         break;
       }
 
