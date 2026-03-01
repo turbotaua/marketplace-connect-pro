@@ -92,7 +92,7 @@ export function ChatThread({ messages, isStreaming, onDisambiguationSelect, onDr
 
     let displayContent = msg.content;
     if (msg.metadata?.draft) {
-      displayContent = displayContent.replace(/```(?:json)?\s*\n?\{[\s\S]*?"type"\s*:\s*"draft"[\s\S]*?\}\s*```/g, "").trim();
+      displayContent = displayContent.replace(/```(?:json|draft)?\s*\n?\{[\s\S]*?"type"\s*:\s*"draft"[\s\S]*?\}\s*```/g, "").trim();
     }
 
     return (

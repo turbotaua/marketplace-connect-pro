@@ -50,7 +50,7 @@ export interface ResolveResult {
 }
 
 export function parseDraftFromText(text: string): DraftData | null {
-  const codeBlockRegex = /```(?:json)?\s*\n?([\s\S]*?)```/g;
+  const codeBlockRegex = /```(?:json|draft)?\s*\n?([\s\S]*?)```/g;
   let match: RegExpExecArray | null;
 
   while ((match = codeBlockRegex.exec(text)) !== null) {
