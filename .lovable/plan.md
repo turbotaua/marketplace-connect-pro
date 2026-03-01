@@ -1,68 +1,40 @@
-## Plan: Add `query_dilovod` Meta-Tool + Add to System Prompt
 
-Two changes to `dilovod-chat/index.ts`, one to `dilovod-proxy/index.ts`. No UI changes needed — the AI's analytics answers come back as regular markdown text in the chat stream.
 
-### 1. `supabase/functions/dilovod-proxy/index.ts` — Add `queryDilovod` passthrough action
+## Diagnosis
 
-New case before the `default:` block. It forwards any valid Dilovod API `action` + `params` directly through `callDilovod`. This gives the AI arbitrary read access to the entire Dilovod API (catalogs, registers, documents, turnover, balances).
+The logs confirm the root cause clearly:
+
+1. Tools **are** being called — `search_counterparty` and `search_item` fire on iteration 1
+2. They execute **in parallel** (`Promise.all` on line 636)
+3. Dilovod API is **single-threaded** — the second request gets `"multithreadApiSession multithread api request blocked"` (500)
+4. AI sees one empty result + one error, gives up
+
+The fix is simple: execute tool calls **sequentially** instead of in parallel.
+
+## Plan
+
+### 1. `supabase/functions/dilovod-chat/index.ts` — Sequential tool execution
+
+Replace the `Promise.all` block (lines 636-648) with a sequential `for...of` loop:
 
 ```typescript
-case "queryDilovod": {
-  const dilovodAction = params.action || "request";
-  const dilovodParams = params.params || {};
-  result = await callDilovod(apiKey, dilovodAction, dilovodParams);
-  break;
+const toolResults: { id: string; result: unknown }[] = [];
+for (const tc of msg.tool_calls) {
+  const args = typeof tc.function.arguments === "string"
+    ? JSON.parse(tc.function.arguments)
+    : tc.function.arguments;
+
+  console.log(`[agentic] Executing tool: ${tc.function.name}(${JSON.stringify(args)})`);
+  const result = await executeAndLog(tc.function.name, args, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, userId);
+  console.log(`[agentic] Tool ${tc.function.name} returned ${JSON.stringify(result).slice(0, 200)}`);
+
+  toolResults.push({ id: tc.id, result });
 }
 ```
 
-Safety: the Dilovod API key has read-only access to registers/catalogs by design; write operations (`saveObject`, `setDelMark`) require explicit action names that the AI won't use in analytics mode. The proxy already has a separate `createChain`/`createDocument`/`setDelMark` for writes.
+This ensures only one Dilovod API call is active at a time, preventing the `multithreadApiSession` error.
 
-### 2. `supabase/functions/dilovod-chat/index.ts` — Add tool definition + mapping
+### 2. Redeploy `dilovod-chat`
 
-Add one new tool to `TOOL_DEFINITIONS`:
+No other changes needed. The proxy, UI, and prompt are all fine.
 
-```typescript
-{
-  type: "function",
-  function: {
-    name: "query_dilovod",
-    description: "Виконує довільний запит до Dilovod API. Використовуй для аналітичних запитів: залишки, обороти, борги, ціни, ABC-аналіз тощо. Параметр action зазвичай 'request'. Параметр params містить from, fields, filters, limit.",
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", description: "Dilovod API action (зазвичай 'request')" },
-        params: { type: "object", description: "Параметри запиту: from, fields, filters, limit тощо" },
-      },
-      required: ["action", "params"],
-    },
-  },
-}
-```
-
-Add to `TOOL_TO_ACTION`:
-
-```typescript
-query_dilovod: "queryDilovod",
-```
-
-### 3. `supabase/functions/dilovod-chat/index.ts` — Replace to extend `SYSTEM_PROMPT`
-
-Replace the entire `SYSTEM_PROMPT` constant (lines 111–212) with the user-provided dual-mode prompt. This is a straight replacement — the new prompt covers:
-
-- **Mode 1 (Document processing)**: same rules as before but with real Dilovod field names and entity types from the actual schema
-- **Mode 2 (Analytics)**: teaches the AI how to construct `query_dilovod` calls for balance registers, turnover registers, price registers, etc.
-- **Full data schema**: all catalogs, documents, registers with real field names
-- **Query rules**: filter operators, ID format, `assembleLinks`, table part queries
-
-The existing tool search rules (1–10) are preserved within Mode 1. The `query_dilovod` tool is used exclusively in Mode 2.
-
-### 4. Deploy both functions
-
-Both `dilovod-proxy` and `dilovod-chat` need redeployment.
-
-### What stays the same
-
-- All UI components, draft parsing, disambiguation flow
-- All existing tools (`search_counterparty`, `search_item`, etc.) — still used in Mode 1
-- `streamChat.ts`, `draftResolver.ts`, `Dilovod.tsx` — zero changes
-- The agentic loop structure (8 iterations, 10s timeout per tool)
