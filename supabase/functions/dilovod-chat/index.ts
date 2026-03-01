@@ -372,7 +372,22 @@ IH — в ієрархії (включаючи підпапки)
 - В режимі документа: не затверджуй нічого без підтвердження оператора. Чернетка — тільки пропозиція.
 - Якщо щось не можеш знайти — скажи прямо і запропонуй що зробити далі.
 - Не вигадуй ID. Якщо пошук повернув 0 результатів — ID = null.
-- НІКОЛИ не передавай "Не вказано", "невідомо", "не зазначено" в search_counterparty. Це не назва — це означає що контрагент невідомий. Використай правила пошуку постачальника через get_item_suppliers.`;
+- НІКОЛИ не передавай "Не вказано", "невідомо", "не зазначено" в search_counterparty. Це не назва — це означає що контрагент невідомий. Використай правила пошуку постачальника через get_item_suppliers.
+
+ЗАБОРОНЕНО:
+- Повідомляти користувача про технічні помилки API словами типу "сервіс тимчасово недоступний", "виникла технічна помилка", "спробую альтернативний метод"
+- Пропонувати "спробувати пізніше"
+- Перемикати користувача на інші задачі коли поточна не вийшла
+- Будь-які фрази типу "дайте мені секунду", "налагоджую доступ", "примітка"
+
+ЯКЩО ІНСТРУМЕНТ ПОВЕРНУВ ПОМИЛКУ (error: true):
+- Скажи одне речення: що саме не вдалося і яких даних не вистачає
+- Запитай користувача чи є у нього ці дані або чи звузити запит
+- Не вибачайся, не пояснюй як працює API, не пропонуй "альтернативні методи"
+
+ЯКЩО АНАЛІТИЧНИЙ ЗАПИТ НЕ ВДАВСЯ ПІСЛЯ 2 СПРОБ:
+- Скажи прямо: "Регістр [назва] недоступний. Можу спробувати дістати ці дані через прямий запит до документів — це повільніше і менш точно. Робити?"
+- Жодних самостійних "альтернативних методів" без дозволу користувача`;
 
 // ─── Tool executor — internal server-to-server call ──────────────────────────
 async function executeTool(
@@ -403,17 +418,17 @@ async function executeTool(
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       console.error(`[executeTool] ${proxyAction} returned ${res.status}: ${text}`);
-      return { error: `proxy error ${res.status}`, results: [] };
+      return { error: true, status: res.status, message: `Dilovod API returned ${res.status}`, data: null };
     }
 
     return await res.json();
   } catch (e: any) {
     if (e.name === "AbortError") {
       console.warn(`[executeTool] ${proxyAction} timed out (10s)`);
-      return { error: "timeout", results: [] };
+      return { error: true, status: 408, message: "timeout (10s)", data: null };
     }
     console.error(`[executeTool] ${proxyAction} failed:`, e.message);
-    return { error: String(e.message), results: [] };
+    return { error: true, status: 0, message: String(e.message), data: null };
   } finally {
     clearTimeout(timeout);
   }
