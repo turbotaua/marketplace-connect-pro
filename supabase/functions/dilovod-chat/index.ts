@@ -632,20 +632,19 @@ serve(async (req) => {
         tool_calls: msg.tool_calls,
       });
 
-      // Execute all tool calls in parallel
-      const toolResults = await Promise.all(
-        msg.tool_calls.map(async (tc: any) => {
-          const args = typeof tc.function.arguments === "string"
-            ? JSON.parse(tc.function.arguments)
-            : tc.function.arguments;
+      // Execute tool calls SEQUENTIALLY — Dilovod API is single-threaded
+      const toolResults: { id: string; result: unknown }[] = [];
+      for (const tc of msg.tool_calls) {
+        const args = typeof tc.function.arguments === "string"
+          ? JSON.parse(tc.function.arguments)
+          : tc.function.arguments;
 
-          console.log(`[agentic] Executing tool: ${tc.function.name}(${JSON.stringify(args)})`);
-          const result = await executeAndLog(tc.function.name, args, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, userId);
-          console.log(`[agentic] Tool ${tc.function.name} returned ${JSON.stringify(result).slice(0, 200)}`);
+        console.log(`[agentic] Executing tool: ${tc.function.name}(${JSON.stringify(args)})`);
+        const result = await executeAndLog(tc.function.name, args, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, userId);
+        console.log(`[agentic] Tool ${tc.function.name} returned ${JSON.stringify(result).slice(0, 200)}`);
 
-          return { id: tc.id, result };
-        })
-      );
+        toolResults.push({ id: tc.id, result });
+      }
 
       // Add tool results to message history
       for (const tr of toolResults) {
