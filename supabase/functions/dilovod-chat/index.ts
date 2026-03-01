@@ -226,20 +226,29 @@ const SYSTEM_PROMPT = `Dilovod AI Agent — System Prompt
 
 Приклади:
 
-АВС-аналіз продажів за останній квартал:
-query_dilovod("request", { "from": { "type": "turnover", "register": "saleIncomes", "startDate": "...", "endDate": "...", "dimensions": ["good"] }, "fields": { "good": "good", "good.name": "goodName", "amountReceipt": "revenue" }, "limit": 500 })
+ABC-аналіз продажів (рух товарів за період — Expense = продано):
+query_dilovod("request", { "from": { "type": "balanceAndTurnover", "register": "goods", "startDate": "...", "endDate": "...", "dimensions": ["good"] }, "fields": { "good": "good", "good.name": "goodName", "amountExpense": "soldAmount", "qtyExpense": "soldQty" }, "limit": 500 })
 
 Поточні борги покупців:
 query_dilovod("request", { "from": { "type": "balance", "register": "buyers", "date": "...", "dimensions": ["person"] }, "fields": { "person": "person", "person.name": "personName", "amountCurFinal": "debt" }, "filters": [{ "alias": "amountCurFinal", "operator": ">", "value": 0 }] })
 
 Залишки товарів на складі:
-query_dilovod("request", { "from": { "type": "balance", "register": "goods", "date": "...", "dimensions": ["good", "storage"] }, "fields": { "good": "good", "good.name": "goodName", "storage.name": "storageName", "qty": "qty", "amount": "amount" } })
+query_dilovod("request", { "from": { "type": "balance", "register": "goods", "date": "...", "dimensions": ["good", "storage"] }, "fields": { "good": "good", "good.name": "goodName", "storage.name": "storageName", "qtyFinal": "qty", "amountFinal": "amount" } })
 
 Борги перед постачальниками:
 query_dilovod("request", { "from": { "type": "balance", "register": "suppliers", "date": "...", "dimensions": ["person"] }, "fields": { "person": "person", "person.name": "personName", "amountCurFinal": "debt" } })
 
 Актуальні ціни продажу:
 query_dilovod("request", { "from": { "type": "sliceLast", "register": "goodsPrices", "date": "..." }, "fields": { "good": "good", "good.name": "goodName", "priceType.name": "priceType", "price": "price", "currency.name": "currency" } })
+
+Обороти закупівель по товарах:
+query_dilovod("request", { "from": { "type": "turnover", "register": "purchase", "startDate": "...", "endDate": "...", "dimensions": ["good"] }, "fields": { "good": "good", "good.name": "goodName", "amountCur": "purchaseAmount", "qty": "purchaseQty" }, "limit": 500 })
+
+Залишки по рахунках (каса, банк):
+query_dilovod("request", { "from": { "type": "balance", "register": "cash", "date": "...", "dimensions": ["cashAccount", "currency"] }, "fields": { "cashAccount": "cashAccount", "cashAccount.name": "accountName", "currency.name": "currencyName", "amountCurFinal": "balance" } })
+
+Продажі з табличних частин документів (альтернатива регістрам):
+query_dilovod("request", { "from": "documents.sale.tpGoods", "fields": { "good": "good", "good.name": "goodName", "qty": "qty", "price": "price", "amountCur": "amount", "owner.date": "docDate", "owner.person": "person", "owner.person.name": "personName" }, "filters": [{ "alias": "owner.date", "operator": ">=", "value": "2026-01-01" }], "limit": 500 })
 
 ━━━ ФОРМАТ АНАЛІТИЧНОЇ ВІДПОВІДІ ━━━
 
@@ -321,33 +330,61 @@ header: date, number, firm, person, currency, amountCur, cashAccount, operationT
 documents.cashOut — Витрата грошей
 header: date, number, firm, person, currency, amountCur, cashAccount, operationType
 
-━━━ РЕГІСТРИ ━━━
+━━━ РЕГІСТРИ (ПЕРЕВІРЕНО через getMetadata) ━━━
 
 balanceRegisters.goods — Складські запаси
-Виміри: good, firm, storage
-Ресурси: qty (кількість), amount (сума за собівартістю)
-Використання: balance (залишки на дату), balanceAndTurnover (рух за період)
+Виміри (dimensions): good, storage, firm, currency, account, goodPart
+Ресурси (resources): qty, amount (собівартість), amountCur, saleAmountCur, saleQty
+Використання: balance (залишки), balanceAndTurnover (рух за період)
+Суфікси balanceAndTurnover: Start, Receipt (надходження), Expense (витрата/продаж), Final
+ВАЖЛИВО: Для ABC-аналізу продажів використовуй balanceAndTurnover з dimensions: ["good"], поля amountExpense/qtyExpense = продано
 
 balanceRegisters.buyers — Розрахунки з покупцями
-Виміри: person, contract, firm
-Ресурси: amountCur (сума у валюті договору), amount (сума у базовій валюті)
-Суфікси для balanceAndTurnover: Start, Receipt (відвантаження), Expense (оплата), Final
+Виміри: person, contract, currency, firm, account, firstEvent, vatTax
+Ресурси: amount, amountCur, vatAmount
+Суфікси balanceAndTurnover: Start, Receipt, Expense, Final
 Позитивний Final = покупець винен нам
 
 balanceRegisters.suppliers — Розрахунки з постачальниками
-Виміри: person, contract, firm
-Ресурси: amountCur, amount
+Виміри: person, contract, currency, firm, account, firstEvent, vatTax
+Ресурси: amount, amountCur, vatAmount
 Позитивний Final = ми винні постачальнику
 
-informationRegisters.goodsPrices — Ціни товарів
-Виміри: good, priceType
+balanceRegisters.cash — Грошові кошти (каса, банк)
+Виміри: cashAccount, currency, firm, account, cashGoal
+Ресурси: amount, amountCur
+
+balanceRegisters.saleIncomes — Доходи від реалізації
+Виміри: incomeItem, department, firm, account
+⚠️ НЕ має good як вимір! Для аналізу продажів по товарах використовуй balanceRegisters.goods або documents.sale.tpGoods
+
+balanceRegisters.saleCosts — Собівартість реалізації
+Виміри: costItem, department, firm, account
+
+balanceRegisters.costs — Витрати
+Виміри: costItem, department, firm, account
+
+balanceRegisters.incomes — Інші доходи
+Виміри: incomeItem, department, firm, account
+
+accumulationRegisters.purchase — Закупівлі (тільки turnover)
+Виміри: good, person, storage, firm, currency, department, contract, goodPart, manager
+Ресурси: amount, amountCur, qty, discountCur, overheadCur, vatAmount, weight
+
+accumulationRegisters.saleOrderControl — Розміщення замовлень покупців (balance)
+Виміри: good, storage, firm, baseDoc
+Ресурси: amountCur, qty, qtyProd, qtyPurchase, qtyReserve
+
+informationRegisters.goodsPrices — Відпускні ціни
+Виміри: good, priceType, date
 Ресурси: price, markup, currency
 Використання: sliceLast (актуальні ціни на дату)
 
-accumulationRegisters.saleIncomes — Доходи від продажів
-Виміри: good, person, firm, storage, document
-Ресурси: amountReceipt (виручка), qtyReceipt (кількість)
-Використання: turnover (обороти за період)
+━━━ ЗАПИТИ ДО ТАБЛИЧНИХ ЧАСТИН ДОКУМЕНТІВ ━━━
+Для детального аналізу продажів по товарах (коли регістри не підходять):
+from: "documents.sale.tpGoods" — рядки відвантажень
+from: "documents.purchase.tpGoods" — рядки надходжень
+Поле owner.* дає доступ до шапки: owner.date, owner.person, owner.person.name, owner.number тощо
 
 ━━━ ПРАВИЛА ЗАПИТІВ ━━━
 
