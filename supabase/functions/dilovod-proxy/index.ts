@@ -557,6 +557,14 @@ serve(async (req) => {
         break;
       }
 
+      // Generic passthrough for analytics queries
+      case "queryDilovod": {
+        const dilovodAction = params.action || "request";
+        const dilovodParams = params.params || {};
+        result = await callDilovod(apiKey, dilovodAction, dilovodParams);
+        break;
+      }
+
       // Soft delete
       case "setDelMark": {
         result = await callDilovod(apiKey, "setDelMark", {
