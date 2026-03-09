@@ -51,6 +51,10 @@ serve(async (req) => {
     // Fetch price multipliers
     const { data: priceMultipliers } = await sb.from("price_multipliers").select("*").eq("marketplace_id", mpConfig.id);
 
+    // Fetch active promotions
+    const nowIso = new Date().toISOString();
+    const { data: promos } = await sb.from("promotions").select("*, promotion_items(*)").eq("marketplace_id", mpConfig.id).eq("is_active", true).lte("starts_at", nowIso).gte("ends_at", nowIso);
+
     // Fetch all Shopify products
     const products = await fetchAllShopifyProducts(shopifyDomain, shopifyToken);
 
