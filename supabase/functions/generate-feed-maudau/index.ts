@@ -51,6 +51,9 @@ serve(async (req) => {
     const { data: catMappings } = await sb.from("category_mapping").select("*").eq("marketplace_id", mpConfig.id);
     const { data: priceMultipliers } = await sb.from("price_multipliers").select("*").eq("marketplace_id", mpConfig.id);
 
+    const nowIso = new Date().toISOString();
+    const { data: promos } = await sb.from("promotions").select("*, promotion_items(*)").eq("marketplace_id", mpConfig.id).eq("is_active", true).lte("starts_at", nowIso).gte("ends_at", nowIso);
+
     const products = await fetchAllShopifyProducts(shopifyDomain, shopifyToken);
 
     const validationErrors: any[] = [];
