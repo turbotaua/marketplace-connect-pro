@@ -133,14 +133,17 @@ const ItemsDialog = ({ promoId, promo, onClose }: ItemsDialogProps) => {
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
 
   // Load all Shopify products once when dialog opens
-  const { data: shopifyProducts, isLoading: loadingProducts } = useQuery({
+  const { data: shopifyProducts, isLoading: loadingProducts, error: productsError } = useQuery({
     queryKey: ["shopify-products-all"],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("shopify-products");
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
       return data?.products || [];
     },
-    staleTime: 5 * 60 * 1000, // cache 5 min
+    staleTime: 5 * 60 * 1000,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
     enabled: !!promoId,
   });
 
