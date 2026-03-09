@@ -125,8 +125,8 @@ serve(async (req) => {
         offerXml += `      <description_ua><![CDATA[${descUa}]]></description_ua>\n`;
         offerXml += `      <description_ru><![CDATA[${descRu}]]></description_ru>\n`;
         offerXml += `      <price>${finalPrice}</price>\n`;
-        if (compareAtPrice && compareAtPrice > finalPrice) {
-          offerXml += `      <old_price>${compareAtPrice}</old_price>\n`;
+        if (priceOld && priceOld > finalPrice) {
+          offerXml += `      <old_price>${priceOld}</old_price>\n`;
         }
         offerXml += `      <categoryId>${escapeXml(catMapping.marketplace_category_id)}</categoryId>\n`;
         offerXml += `      <vendor>${escapeXml(product.vendor || "")}</vendor>\n`;

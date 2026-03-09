@@ -111,8 +111,8 @@ serve(async (req) => {
 
         let offerXml = `    <offer id="${escapeXml(offerId)}" available="${available}">\n`;
         offerXml += `      <price>${finalPrice}</price>\n`;
-        if (compareAtPrice && compareAtPrice > finalPrice) {
-          offerXml += `      <price_old>${compareAtPrice}</price_old>\n`;
+        if (priceOld && priceOld > finalPrice) {
+          offerXml += `      <price_old>${priceOld}</price_old>\n`;
         }
         offerXml += `      <availability>${available ? "in_stock" : "out_of_stock"}</availability>\n`;
         offerXml += `      <category code="${escapeXml(categoryCode)}">${escapeXml(categoryName)}</category>\n`;

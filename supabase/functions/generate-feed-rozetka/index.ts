@@ -126,8 +126,8 @@ serve(async (req) => {
 
         let offerXml = `    <offer id="${escapeXml(offerId)}" available="${available}">\n`;
         offerXml += `      <price>${finalPrice}</price>\n`;
-        if (compareAtPrice && compareAtPrice > finalPrice) {
-          offerXml += `      <price_old>${compareAtPrice}</price_old>\n`;
+        if (priceOld && priceOld > finalPrice) {
+          offerXml += `      <price_old>${priceOld}</price_old>\n`;
         }
         offerXml += `      <currencyId>UAH</currencyId>\n`;
         offerXml += `      <categoryId>${escapeXml(catMapping.marketplace_category_id)}</categoryId>\n`;
