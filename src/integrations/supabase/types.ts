@@ -348,6 +348,82 @@ export type Database = {
           },
         ]
       }
+      promotion_items: {
+        Row: {
+          created_at: string
+          id: string
+          promotion_id: string
+          shopify_product_id: string
+          shopify_variant_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          promotion_id: string
+          shopify_product_id: string
+          shopify_variant_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          promotion_id?: string
+          shopify_product_id?: string
+          shopify_variant_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "promotion_items_promotion_id_fkey"
+            columns: ["promotion_id"]
+            isOneToOne: false
+            referencedRelation: "promotions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      promotions: {
+        Row: {
+          created_at: string
+          discount_percent: number
+          ends_at: string
+          id: string
+          is_active: boolean
+          marketplace_id: string
+          name: string
+          starts_at: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          discount_percent: number
+          ends_at: string
+          id?: string
+          is_active?: boolean
+          marketplace_id: string
+          name: string
+          starts_at: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          discount_percent?: number
+          ends_at?: string
+          id?: string
+          is_active?: boolean
+          marketplace_id?: string
+          name?: string
+          starts_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "promotions_marketplace_id_fkey"
+            columns: ["marketplace_id"]
+            isOneToOne: false
+            referencedRelation: "marketplace_config"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       validation_errors: {
         Row: {
           created_at: string
