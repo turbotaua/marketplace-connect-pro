@@ -89,8 +89,17 @@ serve(async (req) => {
           continue;
         }
 
-        const finalPrice = applyRounding(price * multiplier, mpConfig.rounding_rule);
+        const finalPriceBase = applyRounding(price * multiplier, mpConfig.rounding_rule);
         const compareAtPrice = variant.compare_at_price ? applyRounding(parseFloat(variant.compare_at_price) * multiplier, mpConfig.rounding_rule) : null;
+
+        let finalPrice = finalPriceBase;
+        let priceOld: number | null = compareAtPrice && compareAtPrice > finalPrice ? compareAtPrice : null;
+        const promoMatch = promos?.flatMap((p: any) => (p.promotion_items || []).map((pi: any) => ({ ...pi, discount_percent: p.discount_percent }))).find((pi: any) => pi.shopify_product_id === String(product.id) && (!pi.shopify_variant_id || pi.shopify_variant_id === String(variant.id)));
+        if (promoMatch) {
+          priceOld = finalPrice;
+          finalPrice = applyRounding(finalPrice * (1 - promoMatch.discount_percent / 100), mpConfig.rounding_rule);
+        }
+
         const available = (variant.inventory_quantity ?? 0) > 0;
         const offerId = variant.sku || `${product.id}-${variant.id}`;
         const pictures = product.images.map((img: any) => `      <picture>${escapeXml(img.src)}</picture>`).join("\n");
