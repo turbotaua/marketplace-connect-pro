@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { LayoutDashboard, DollarSign, FolderTree, ScrollText, LogOut } from "lucide-react";
+import { LayoutDashboard, DollarSign, FolderTree, ScrollText, LogOut, Percent } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Session } from "@supabase/supabase-js";
 
@@ -9,6 +9,7 @@ const navItems = [
   { to: "/", label: "Дашборд", icon: LayoutDashboard },
   { to: "/prices", label: "Ціни", icon: DollarSign },
   { to: "/categories", label: "Категорії", icon: FolderTree },
+  { to: "/promotions", label: "Промо", icon: Percent },
   { to: "/logs", label: "Логи", icon: ScrollText },
 ];
 

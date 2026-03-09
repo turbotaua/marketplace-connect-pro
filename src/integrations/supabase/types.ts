@@ -70,6 +70,180 @@ export type Database = {
           },
         ]
       }
+      dilovod_audit_log: {
+        Row: {
+          action_type: string
+          created_at: string
+          dilovod_ids: Json | null
+          draft_id: string | null
+          error_message: string | null
+          event_type: string
+          id: string
+          payload_snapshot: Json
+          source_file_url: string | null
+          user_id: string
+        }
+        Insert: {
+          action_type: string
+          created_at?: string
+          dilovod_ids?: Json | null
+          draft_id?: string | null
+          error_message?: string | null
+          event_type: string
+          id?: string
+          payload_snapshot?: Json
+          source_file_url?: string | null
+          user_id: string
+        }
+        Update: {
+          action_type?: string
+          created_at?: string
+          dilovod_ids?: Json | null
+          draft_id?: string | null
+          error_message?: string | null
+          event_type?: string
+          id?: string
+          payload_snapshot?: Json
+          source_file_url?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dilovod_audit_log_draft_id_fkey"
+            columns: ["draft_id"]
+            isOneToOne: false
+            referencedRelation: "dilovod_drafts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      dilovod_catalog_cache: {
+        Row: {
+          cache_key: string
+          fetched_at: string
+          ttl_hours: number
+          value_json: Json
+        }
+        Insert: {
+          cache_key: string
+          fetched_at?: string
+          ttl_hours?: number
+          value_json?: Json
+        }
+        Update: {
+          cache_key?: string
+          fetched_at?: string
+          ttl_hours?: number
+          value_json?: Json
+        }
+        Relationships: []
+      }
+      dilovod_drafts: {
+        Row: {
+          action_type: string
+          created_at: string
+          dilovod_ids: Json | null
+          flags: string[] | null
+          id: string
+          payload: Json
+          session_id: string
+          source_file_url: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          action_type: string
+          created_at?: string
+          dilovod_ids?: Json | null
+          flags?: string[] | null
+          id?: string
+          payload?: Json
+          session_id: string
+          source_file_url?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          action_type?: string
+          created_at?: string
+          dilovod_ids?: Json | null
+          flags?: string[] | null
+          id?: string
+          payload?: Json
+          session_id?: string
+          source_file_url?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dilovod_drafts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "dilovod_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      dilovod_messages: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          metadata: Json | null
+          role: string
+          session_id: string
+        }
+        Insert: {
+          content?: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          role: string
+          session_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          role?: string
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dilovod_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "dilovod_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      dilovod_sessions: {
+        Row: {
+          created_at: string
+          id: string
+          last_active_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_active_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_active_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       feed_logs: {
         Row: {
           created_at: string
@@ -167,6 +341,82 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "price_multipliers_marketplace_id_fkey"
+            columns: ["marketplace_id"]
+            isOneToOne: false
+            referencedRelation: "marketplace_config"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      promotion_items: {
+        Row: {
+          created_at: string
+          id: string
+          promotion_id: string
+          shopify_product_id: string
+          shopify_variant_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          promotion_id: string
+          shopify_product_id: string
+          shopify_variant_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          promotion_id?: string
+          shopify_product_id?: string
+          shopify_variant_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "promotion_items_promotion_id_fkey"
+            columns: ["promotion_id"]
+            isOneToOne: false
+            referencedRelation: "promotions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      promotions: {
+        Row: {
+          created_at: string
+          discount_percent: number
+          ends_at: string
+          id: string
+          is_active: boolean
+          marketplace_id: string
+          name: string
+          starts_at: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          discount_percent: number
+          ends_at: string
+          id?: string
+          is_active?: boolean
+          marketplace_id: string
+          name: string
+          starts_at: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          discount_percent?: number
+          ends_at?: string
+          id?: string
+          is_active?: boolean
+          marketplace_id?: string
+          name?: string
+          starts_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "promotions_marketplace_id_fkey"
             columns: ["marketplace_id"]
             isOneToOne: false
             referencedRelation: "marketplace_config"
