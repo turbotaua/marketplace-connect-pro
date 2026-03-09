@@ -9,6 +9,7 @@ const navItems = [
   { to: "/", label: "Дашборд", icon: LayoutDashboard },
   { to: "/prices", label: "Ціни", icon: DollarSign },
   { to: "/categories", label: "Категорії", icon: FolderTree },
+  { to: "/promotions", label: "Промо", icon: Percent },
   { to: "/logs", label: "Логи", icon: ScrollText },
 ];
 
