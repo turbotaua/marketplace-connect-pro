@@ -186,11 +186,21 @@ const Dashboard = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Помилки валідації</CardTitle>
+            <CardTitle className="text-base">Проблемні товари (остання генерація)</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-foreground">{errorCount ?? 0}</p>
-            <p className="text-sm text-muted-foreground">Товарів з проблемами</p>
+            {latestErrors && latestErrors.length > 0 ? (
+              <div className="space-y-2">
+                {latestErrors.map((e) => (
+                  <div key={e.slug} className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground capitalize">{e.slug}</span>
+                    <Badge variant={e.count > 0 ? "destructive" : "secondary"}>{e.count}</Badge>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Немає даних</p>
+            )}
           </CardContent>
         </Card>
 
