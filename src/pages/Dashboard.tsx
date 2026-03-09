@@ -38,14 +38,44 @@ const Dashboard = () => {
     },
   });
 
-  const { data: errorCount } = useQuery({
-    queryKey: ["validation_errors_count"],
+  const { data: latestErrors } = useQuery({
+    queryKey: ["validation_errors_latest"],
     queryFn: async () => {
-      const { count, error } = await supabase
+      // Get latest successful feed_log per marketplace
+      const { data: logs, error: logsErr } = await supabase
+        .from("feed_logs")
+        .select("id, marketplace_slug")
+        .eq("status", "success")
+        .order("created_at", { ascending: false });
+      if (logsErr) throw logsErr;
+
+      // Deduplicate to get latest log per slug
+      const latestBySlug = new Map<string, string>();
+      for (const log of logs || []) {
+        if (!latestBySlug.has(log.marketplace_slug)) {
+          latestBySlug.set(log.marketplace_slug, log.id);
+        }
+      }
+
+      const logIds = Array.from(latestBySlug.values());
+      if (logIds.length === 0) return [];
+
+      const { data: errors, error: errErr } = await supabase
         .from("validation_errors")
-        .select("*", { count: "exact", head: true });
-      if (error) throw error;
-      return count ?? 0;
+        .select("marketplace_slug, feed_log_id")
+        .in("feed_log_id", logIds);
+      if (errErr) throw errErr;
+
+      // Count per marketplace
+      const counts = new Map<string, number>();
+      for (const e of errors || []) {
+        counts.set(e.marketplace_slug, (counts.get(e.marketplace_slug) || 0) + 1);
+      }
+
+      return Array.from(latestBySlug.keys()).map((slug) => ({
+        slug,
+        count: counts.get(slug) || 0,
+      }));
     },
   });
 
