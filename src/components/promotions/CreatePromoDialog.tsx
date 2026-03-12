@@ -42,8 +42,9 @@ const CreatePromoDialog = ({ open, onOpenChange, marketplaces }: CreatePromoDial
     start_time: "00:00",
     end_time: "23:59",
     is_recurring: false,
-    recurrence_pattern: "daily" as "daily" | "weekly",
+    recurrence_pattern: "weekly" as "daily" | "weekly",
     recurrence_day_of_week: "1",
+    recurrence_end_day_of_week: "1",
   });
 
   const resetForm = () => {
@@ -51,7 +52,8 @@ const CreatePromoDialog = ({ open, onOpenChange, marketplaces }: CreatePromoDial
       name: "", marketplace_id: "", discount_percent: "",
       starts_at: undefined, ends_at: undefined,
       start_time: "00:00", end_time: "23:59",
-      is_recurring: false, recurrence_pattern: "daily", recurrence_day_of_week: "1",
+      is_recurring: false, recurrence_pattern: "weekly",
+      recurrence_day_of_week: "1", recurrence_end_day_of_week: "1",
     });
   };
 
@@ -63,11 +65,7 @@ const CreatePromoDialog = ({ open, onOpenChange, marketplaces }: CreatePromoDial
       if (!newPromo.is_recurring && !newPromo.ends_at) {
         throw new Error("Для одноразової акції потрібна дата закінчення");
       }
-      if (newPromo.is_recurring && newPromo.start_time >= newPromo.end_time) {
-        throw new Error("Час закінчення повинен бути пізніше часу початку");
-      }
 
-      // For one-time promos, combine date + time into starts_at/ends_at
       const startsAt = new Date(newPromo.starts_at);
       const [sh, sm] = newPromo.start_time.split(":").map(Number);
       startsAt.setHours(sh, sm, 0, 0);
@@ -79,6 +77,8 @@ const CreatePromoDialog = ({ open, onOpenChange, marketplaces }: CreatePromoDial
         endsAt.setHours(eh, em, 0, 0);
       }
 
+      const isWeekly = newPromo.is_recurring && newPromo.recurrence_pattern === "weekly";
+
       const { error } = await supabase.from("promotions").insert({
         name: newPromo.name,
         marketplace_id: newPromo.marketplace_id,
@@ -87,8 +87,8 @@ const CreatePromoDialog = ({ open, onOpenChange, marketplaces }: CreatePromoDial
         ends_at: endsAt?.toISOString() ?? null,
         is_recurring: newPromo.is_recurring,
         recurrence_pattern: newPromo.is_recurring ? newPromo.recurrence_pattern : null,
-        recurrence_day_of_week: newPromo.is_recurring && newPromo.recurrence_pattern === "weekly"
-          ? parseInt(newPromo.recurrence_day_of_week) : null,
+        recurrence_day_of_week: isWeekly ? parseInt(newPromo.recurrence_day_of_week) : null,
+        recurrence_end_day_of_week: isWeekly ? parseInt(newPromo.recurrence_end_day_of_week) : null,
         start_time: newPromo.is_recurring ? newPromo.start_time : null,
         end_time: newPromo.is_recurring ? newPromo.end_time : null,
       });
@@ -138,19 +138,37 @@ const CreatePromoDialog = ({ open, onOpenChange, marketplaces }: CreatePromoDial
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="daily">Щоденно</SelectItem>
-                  <SelectItem value="weekly">Щотижнево</SelectItem>
+                  <SelectItem value="weekly">Щотижнево (день → день)</SelectItem>
                 </SelectContent>
               </Select>
 
               {newPromo.recurrence_pattern === "weekly" && (
-                <Select value={newPromo.recurrence_day_of_week} onValueChange={(v) => setNewPromo({ ...newPromo, recurrence_day_of_week: v })}>
-                  <SelectTrigger><SelectValue placeholder="День тижня" /></SelectTrigger>
-                  <SelectContent>
-                    {DAYS_OF_WEEK.map((d) => (
-                      <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground mb-1 block">З дня</Label>
+                      <Select value={newPromo.recurrence_day_of_week} onValueChange={(v) => setNewPromo({ ...newPromo, recurrence_day_of_week: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {DAYS_OF_WEEK.map((d) => (
+                            <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground mb-1 block">По день</Label>
+                      <Select value={newPromo.recurrence_end_day_of_week} onValueChange={(v) => setNewPromo({ ...newPromo, recurrence_end_day_of_week: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {DAYS_OF_WEEK.map((d) => (
+                            <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
               )}
 
               <div className="grid grid-cols-2 gap-3">
