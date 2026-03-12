@@ -46,9 +46,6 @@ const Auth = () => {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Зачекайте..." : "Увійти"}
             </Button>
-            <Button type="button" variant="outline" className="w-full" onClick={handleSignUp} disabled={loading}>
-              Зареєструватися
-            </Button>
           </form>
         </CardContent>
       </Card>
