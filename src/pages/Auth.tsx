@@ -26,17 +26,6 @@ const Auth = () => {
     }
   };
 
-  const handleSignUp = async () => {
-    setLoading(true);
-    const { error } = await supabase.auth.signUp({ email, password });
-    setLoading(false);
-    if (error) {
-      toast({ title: "Помилка реєстрації", description: error.message, variant: "destructive" });
-    } else {
-      toast({ title: "Успіх", description: "Перевірте пошту для підтвердження" });
-    }
-  };
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
       <Card className="w-full max-w-sm">
@@ -56,9 +45,6 @@ const Auth = () => {
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Зачекайте..." : "Увійти"}
-            </Button>
-            <Button type="button" variant="outline" className="w-full" onClick={handleSignUp} disabled={loading}>
-              Зареєструватися
             </Button>
           </form>
         </CardContent>
