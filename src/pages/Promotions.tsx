@@ -16,31 +16,46 @@ import ItemsDialog from "@/components/promotions/ItemsDialog";
 
 const DAYS_SHORT = ["Нд", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
 
+// Check if current day is within a day-of-week range (supports wrap-around, e.g. Fri→Mon)
+const isDayInRange = (currentDay: number, startDay: number, endDay: number): boolean => {
+  if (startDay <= endDay) return currentDay >= startDay && currentDay <= endDay;
+  // Wrap-around (e.g. Fri=5 → Mon=1)
+  return currentDay >= startDay || currentDay <= endDay;
+};
+
 const isPromoActive = (promo: any): "active" | "upcoming" | "expired" | "disabled" => {
   if (!promo.is_active) return "disabled";
 
   const now = new Date();
 
   if (promo.is_recurring) {
-    // Check date range first
     if (new Date(promo.starts_at) > now) return "upcoming";
     if (promo.ends_at && new Date(promo.ends_at) < now) return "expired";
 
-    // Check day of week for weekly
+    const currentDay = now.getDay();
+    const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
     if (promo.recurrence_pattern === "weekly" && promo.recurrence_day_of_week !== null) {
-      if (now.getDay() !== promo.recurrence_day_of_week) return "upcoming";
+      const startDay = promo.recurrence_day_of_week;
+      const endDay = promo.recurrence_end_day_of_week ?? startDay;
+
+      if (!isDayInRange(currentDay, startDay, endDay)) return "upcoming";
+
+      // On start day: must be >= start_time
+      if (currentDay === startDay && promo.start_time && currentTime < promo.start_time) return "upcoming";
+      // On end day: must be <= end_time
+      if (currentDay === endDay && promo.end_time && currentTime > promo.end_time) return "upcoming";
+
+      return "active";
     }
 
-    // Check time window
+    // Daily: check time window
     if (promo.start_time && promo.end_time) {
-      const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
       if (currentTime < promo.start_time || currentTime > promo.end_time) return "upcoming";
     }
-
     return "active";
   }
 
-  // One-time promo
   if (new Date(promo.starts_at) > now) return "upcoming";
   if (promo.ends_at && new Date(promo.ends_at) < now) return "expired";
   return "active";
@@ -50,7 +65,14 @@ const formatPeriod = (promo: any): string => {
   if (promo.is_recurring) {
     const time = promo.start_time && promo.end_time ? `${promo.start_time}–${promo.end_time}` : "";
     if (promo.recurrence_pattern === "weekly" && promo.recurrence_day_of_week !== null) {
-      return `Щотиж. ${DAYS_SHORT[promo.recurrence_day_of_week]} ${time}`;
+      const startDay = DAYS_SHORT[promo.recurrence_day_of_week];
+      const endDay = promo.recurrence_end_day_of_week !== null
+        ? DAYS_SHORT[promo.recurrence_end_day_of_week]
+        : startDay;
+      if (startDay === endDay) {
+        return `Щотиж. ${startDay} ${time}`;
+      }
+      return `Щотиж. ${startDay} ${promo.start_time || ""}–${endDay} ${promo.end_time || ""}`;
     }
     return `Щоденно ${time}`;
   }
