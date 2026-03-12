@@ -384,33 +384,48 @@ export type Database = {
         Row: {
           created_at: string
           discount_percent: number
-          ends_at: string
+          end_time: string | null
+          ends_at: string | null
           id: string
           is_active: boolean
+          is_recurring: boolean
           marketplace_id: string
           name: string
+          recurrence_day_of_week: number | null
+          recurrence_pattern: string | null
+          start_time: string | null
           starts_at: string
           updated_at: string
         }
         Insert: {
           created_at?: string
           discount_percent: number
-          ends_at: string
+          end_time?: string | null
+          ends_at?: string | null
           id?: string
           is_active?: boolean
+          is_recurring?: boolean
           marketplace_id: string
           name: string
+          recurrence_day_of_week?: number | null
+          recurrence_pattern?: string | null
+          start_time?: string | null
           starts_at: string
           updated_at?: string
         }
         Update: {
           created_at?: string
           discount_percent?: number
-          ends_at?: string
+          end_time?: string | null
+          ends_at?: string | null
           id?: string
           is_active?: boolean
+          is_recurring?: boolean
           marketplace_id?: string
           name?: string
+          recurrence_day_of_week?: number | null
+          recurrence_pattern?: string | null
+          start_time?: string | null
           starts_at?: string
           updated_at?: string
         }
