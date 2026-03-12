@@ -392,6 +392,7 @@ export type Database = {
           marketplace_id: string
           name: string
           recurrence_day_of_week: number | null
+          recurrence_end_day_of_week: number | null
           recurrence_pattern: string | null
           start_time: string | null
           starts_at: string
@@ -408,6 +409,7 @@ export type Database = {
           marketplace_id: string
           name: string
           recurrence_day_of_week?: number | null
+          recurrence_end_day_of_week?: number | null
           recurrence_pattern?: string | null
           start_time?: string | null
           starts_at: string
@@ -424,6 +426,7 @@ export type Database = {
           marketplace_id?: string
           name?: string
           recurrence_day_of_week?: number | null
+          recurrence_end_day_of_week?: number | null
           recurrence_pattern?: string | null
           start_time?: string | null
           starts_at?: string
