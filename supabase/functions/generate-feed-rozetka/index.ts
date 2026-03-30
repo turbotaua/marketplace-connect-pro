@@ -123,9 +123,21 @@ serve(async (req) => {
 
       // Parse tags for additional data
       const tags = product.tags || "";
-      const warranty = parseTagValue(tags, "warranty:") || "12 місяців";
+      const warranty = parseTagValue(tags, "warranty:") || "14 днів";
       const country = parseTagValue(tags, "country:");
       const state = parseTagValue(tags, "state:") || "new";
+
+      // Rozetka-specific characteristics from tags
+      const tagParams: { name: string; prefix: string }[] = [
+        { name: "Вид", prefix: "вид:" },
+        { name: "Тип", prefix: "тип:" },
+        { name: "Аромат", prefix: "аромат:" },
+        { name: "Матеріал свічки", prefix: "матеріал:" },
+        { name: "Час горіння", prefix: "час_горіння:" },
+        { name: "Висота", prefix: "висота:" },
+        { name: "Колір", prefix: "колір:" },
+        { name: "Свічник", prefix: "свічник:" },
+      ];
 
       // Sanitize description
       const sanitizedDesc = sanitizeDescription(product.body_html || "");
@@ -161,8 +173,9 @@ serve(async (req) => {
         const offerId = `${product.id}-${variant.id}`;
         const pictures = product.images.slice(0, 15).map((img: any) => `      <picture>${escapeXml(img.src)}</picture>`).join("\n");
         const variantTitle = variant.title !== "Default Title" ? ` ${variant.title}` : "";
-        const skuSuffix = variant.sku ? ` (${variant.sku})` : "";
-        const name = `${product.title}${variantTitle}${skuSuffix}`;
+        const productType = product.product_type || "";
+        const vendorName = product.vendor || "";
+        const name = `${productType} ${vendorName} ${product.title}${variantTitle}`.replace(/\s+/g, ' ').trim();
 
         // Validation: title length
         if (name.length > 255) {
@@ -211,6 +224,14 @@ serve(async (req) => {
         }
         if (variant.barcode) {
           offerXml += `      <param name="Штрих код">${escapeXml(variant.barcode)}</param>\n`;
+        }
+
+        // Tag-based characteristics
+        for (const tp of tagParams) {
+          const val = parseTagValue(tags, tp.prefix);
+          if (val) {
+            offerXml += `      <param name="${escapeXml(tp.name)}">${escapeXml(val)}</param>\n`;
+          }
         }
 
         offerXml += `    </offer>`;
