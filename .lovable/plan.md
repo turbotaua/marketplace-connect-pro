@@ -1,103 +1,62 @@
 
 
-# Покращення XML фіду Rozetka відповідно до вимог маркетплейсу
+# Оновлення формату назви та характеристик для Rozetka XML
 
-## Що зараз відсутнє (порівняно з вимогами Rozetka)
+## Аналіз поточного стану vs Rozetka
 
-1. **Назва товару** -- зараз просто `product.title + variant.title`. Rozetka вимагає формулу: "Тип товару Бренд Модель Колір Характеристики (Артикул)". Не форматується.
-2. **Гарантія** -- повністю відсутня. Rozetka показує гарантію з характеристики `<param name="Гарантія">`.
-3. **Штрихкод** -- `variant.barcode` не використовується в Rozetka фіді (хоча Epicentr вже його виводить).
-4. **Країна-виробник** -- відсутня.
-5. **URL товару** -- тег `<url>` в offer не використовується (необов'язковий, але корисний).
-6. **Стан товару** -- тег `<state>` не використовується.
-7. **Metafields** -- Shopify API не запитує metafields для отримання додаткової інформації (гарантія, країна-виробник).
+З продукту на Rozetka видно характеристики, яких немає в XML:
+- Вид (Ароматичні, Декоративні)
+- Тип (Свічки)
+- Аромат (Свіжий, Хвойний, Цитрусовий)
+- Матеріал свічки (Соєвий віск)
+- Час горіння (30 год)
+- Висота (9 см)
+- Колір (Білий)
+- Свічник (Скляний)
+- Країна реєстрації бренду (Україна)
+- Гарантія (14 днів, не 12 місяців як зараз за замовчуванням)
 
 ## Що зробимо
 
-### 1. Розширити Shopify API запит для metafields
+### 1. Новий формат назви
 
-Shopify Products API з `fields=metafields` не повертає metafields (потрібен окремий запит або GraphQL). Замість цього використаємо **теги (tags)** Shopify як джерело додаткових даних. Shopify tags -- це найпростіший спосіб додати метадані без складного API.
+Shopify product.title = "Київські каштани" (тільки назва аромату), variant.title = "250 мл".
 
-**Конвенція тегів:**
-- `warranty:12 місяців` -- гарантія
-- `country:Китай` -- країна-виробник
-- `state:new` -- стан товару (new/used/refurbished/stock)
+Конструюємо Rozetka-назву: `{product_type} {vendor} {product.title} {variant.title}`
 
-Це просто, не потребує змін Shopify API, і адмін може легко редагувати теги в Shopify.
+Результат: **"Ароматична свічка Turbota candles Київські каштани 250 мл"**
 
-### 2. Додати нові теги в XML offer
+- Прибираємо суфікс `(SKU)` з назви
+- Якщо variant.title = "Default Title" -- не додаємо його
+- product_type і vendor вже є в Shopify API
 
-В `generate-feed-rozetka/index.ts`:
+### 2. Розширити конвенцію тегів для характеристик
 
-- **`<param name="Гарантія">`** -- з тегу `warranty:...` або дефолт "12 місяців"
-- **`<param name="Країна-виробник товару">`** -- з тегу `country:...`
-- **`<param name="Штрих код">`** -- з `variant.barcode` (як в Epicentr)
-- **`<url>`** -- посилання на Shopify handle: `https://{domain}/products/{handle}`
-- **`<state>`** -- з тегу `state:...` або дефолт `new`
-
-### 3. Покращити формат назви
-
-Змінити логіку формування `<name>` та `<name_ua>`:
-- Поточне: `"Product Title Variant Title"`
-- Нове: `"Product Title Variant Title (SKU)"` -- додати артикул в дужках (як рекомендує Rozetka)
-- Якщо SKU відсутній -- без дужок
-
-### 4. Додати валідацію нових вимог
-
-Нові validation errors:
-- `no_description` -- якщо `body_html` порожній або коротший за 50 символів
-- `no_barcode` -- якщо `variant.barcode` відсутній
-- `title_too_long` -- якщо назва > 255 символів
-
-### 5. Очистити description від заборонених елементів
-
-Rozetka дозволяє лише певні HTML теги. Додати функцію `sanitizeDescription()` яка видаляє:
-- `<img>`, `<video>`, `<iframe>`, `<script>`, `<style>`, `<a>` теги
-- Атрибути `style`, `color` з дозволених тегів
-- Залишає: `<p>`, `<b>`, `<strong>`, `<br>`, `<h1>`-`<h6>`, `<ul>`, `<ol>`, `<li>`, `<table>`, `<tbody>`, `<tr>`, `<td>`, `<th>`, `<div>`, `<span>`
-
-## Файли для зміни
-
-- `supabase/functions/generate-feed-rozetka/index.ts` -- основні зміни
-
-## Технічні деталі
+Нові Shopify теги для `<param>`:
 
 ```text
-Поточний XML offer:
-  <offer id="..." available="true">
-    <price>...</price>
-    <currencyId>UAH</currencyId>
-    <categoryId>...</categoryId>
-    <picture>...</picture>
-    <vendor>...</vendor>
-    <article>...</article>
-    <stock_quantity>...</stock_quantity>
-    <name>Product Title</name>
-    <name_ua>Product Title</name_ua>
-    <description>...</description>
-    <description_ua>...</description_ua>
-    <param name="Option">Value</param>
-  </offer>
-
-Покращений XML offer:
-  <offer id="..." available="true">
-    <url>https://turbota.com.ua/products/handle</url>
-    <price>...</price>
-    <currencyId>UAH</currencyId>
-    <categoryId>...</categoryId>
-    <picture>...</picture>
-    <vendor>...</vendor>
-    <article>...</article>
-    <stock_quantity>...</stock_quantity>
-    <state>new</state>
-    <name>Product Title (SKU)</name>
-    <name_ua>Product Title (SKU)</name_ua>
-    <description>...(sanitized HTML)...</description>
-    <description_ua>...(sanitized HTML)...</description_ua>
-    <param name="Option">Value</param>
-    <param name="Гарантія">12 місяців</param>
-    <param name="Країна-виробник товару">Китай</param>
-    <param name="Штрих код">1234567890</param>
-  </offer>
+вид:Ароматичні,Декоративні    → <param name="Вид">Ароматичні, Декоративні</param>
+тип:Свічки                    → <param name="Тип">Свічки</param>
+аромат:Свіжий,Хвойний         → <param name="Аромат">Свіжий, Хвойний</param>
+матеріал:Соєвий віск          → <param name="Матеріал свічки">Соєвий віск</param>
+час_горіння:30 год             → <param name="Час горіння">30 год</param>
+висота:9 см                   → <param name="Висота">9 см</param>
+колір:Білий                   → <param name="Колір">Білий</param>
+свічник:Скляний               → <param name="Свічник">Скляний</param>
 ```
+
+`warranty:` і `country:` залишаються як є, але дефолт гарантії змінюємо з "12 місяців" на "14 днів".
+
+### 3. Зміни в edge function
+
+В `supabase/functions/generate-feed-rozetka/index.ts`:
+
+- **Назва**: `{product_type} {vendor} {product.title} {variant.title}` замість `{product.title}{variantTitle}{skuSuffix}`
+- **Характеристики**: парсимо всі нові теги і додаємо як `<param>`
+- **Гарантія**: дефолт "14 днів"
+- Product options (`product.options`) залишаються як є
+
+### Файли для зміни
+
+- `supabase/functions/generate-feed-rozetka/index.ts`
 
