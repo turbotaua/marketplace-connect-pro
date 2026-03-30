@@ -226,6 +226,14 @@ serve(async (req) => {
           offerXml += `      <param name="Штрих код">${escapeXml(variant.barcode)}</param>\n`;
         }
 
+        // Tag-based characteristics
+        for (const tp of tagParams) {
+          const val = parseTagValue(tags, tp.prefix);
+          if (val) {
+            offerXml += `      <param name="${escapeXml(tp.name)}">${escapeXml(val)}</param>\n`;
+          }
+        }
+
         offerXml += `    </offer>`;
         offers.push(offerXml);
       }
