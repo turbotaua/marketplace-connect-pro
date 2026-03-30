@@ -123,9 +123,21 @@ serve(async (req) => {
 
       // Parse tags for additional data
       const tags = product.tags || "";
-      const warranty = parseTagValue(tags, "warranty:") || "12 місяців";
+      const warranty = parseTagValue(tags, "warranty:") || "14 днів";
       const country = parseTagValue(tags, "country:");
       const state = parseTagValue(tags, "state:") || "new";
+
+      // Rozetka-specific characteristics from tags
+      const tagParams: { name: string; prefix: string }[] = [
+        { name: "Вид", prefix: "вид:" },
+        { name: "Тип", prefix: "тип:" },
+        { name: "Аромат", prefix: "аромат:" },
+        { name: "Матеріал свічки", prefix: "матеріал:" },
+        { name: "Час горіння", prefix: "час_горіння:" },
+        { name: "Висота", prefix: "висота:" },
+        { name: "Колір", prefix: "колір:" },
+        { name: "Свічник", prefix: "свічник:" },
+      ];
 
       // Sanitize description
       const sanitizedDesc = sanitizeDescription(product.body_html || "");
