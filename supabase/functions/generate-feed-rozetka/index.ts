@@ -175,7 +175,8 @@ serve(async (req) => {
         const variantTitle = variant.title !== "Default Title" ? ` ${variant.title}` : "";
         const productType = product.product_type || "";
         const vendorName = product.vendor || "";
-        const name = `${productType} ${vendorName} ${product.title}${variantTitle}`.replace(/\s+/g, ' ').trim();
+        const displayType = productType.toLowerCase() === "свічки" ? "Ароматична свічка" : productType;
+        const name = `${displayType} ${vendorName} ${product.title}${variantTitle}`.replace(/\s+/g, ' ').trim();
 
         // Validation: title length
         if (name.length > 255) {
