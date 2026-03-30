@@ -173,8 +173,9 @@ serve(async (req) => {
         const offerId = `${product.id}-${variant.id}`;
         const pictures = product.images.slice(0, 15).map((img: any) => `      <picture>${escapeXml(img.src)}</picture>`).join("\n");
         const variantTitle = variant.title !== "Default Title" ? ` ${variant.title}` : "";
-        const skuSuffix = variant.sku ? ` (${variant.sku})` : "";
-        const name = `${product.title}${variantTitle}${skuSuffix}`;
+        const productType = product.product_type || "";
+        const vendorName = product.vendor || "";
+        const name = `${productType} ${vendorName} ${product.title}${variantTitle}`.replace(/\s+/g, ' ').trim();
 
         // Validation: title length
         if (name.length > 255) {
